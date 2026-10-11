@@ -51,9 +51,9 @@ def extras(folder):
     check('中文口播离线识别与音乐分离720p成片',speech)
     def recovery():
         from .selftest import fixtures
-        aa,bb,cc,_=fixtures(folder/"中文 路径 O'Brien")
+        aa,bb,cc,_=fixtures(folder/("中文 路径 O'Brien_"+uuid.uuid4().hex[:8]))
         assets=scan([aa,bb,cc],'a')['assets'];am={x['id']:x for x in assets};keys=[x['id'] for x in assets]
-        st=Store(folder/'recovery_db');s=dict(SETTINGS,resolution='360x640',output=str(folder/'故障恢复'))
+        st=Store(folder/('recovery_db_'+uuid.uuid4().hex[:8]));s=dict(SETTINGS,resolution='360x640',output=str(folder/'故障恢复'))
         pairs=[(keys[0],keys[1]),(keys[0],keys[2])];bid=st.create('故障测试',am,pairs,s,[s,s])
         original=bb.read_bytes();bb.write_bytes(b'corrupted media')
         r=run_batch(bid,folder=st.folder)
@@ -80,6 +80,9 @@ def extras(folder):
 
 
 def gui(folder):
+    import faulthandler
+    trace = open(Path(folder).parent/'gui_trace.log','w')
+    faulthandler.dump_traceback_later(35, repeat=True, file=trace)
     from PySide6.QtWidgets import QApplication
     from PySide6.QtTest import QTest
     from PySide6.QtMultimedia import QMediaPlayer
@@ -122,24 +125,29 @@ def gui(folder):
         jobs=window.store.jobs(window.bid);assert all(x['status']=='complete' for x in jobs),jobs
         assert window.total_progress.value()==2
         window.grab().save(str(folder/'导出完成.png'))
-        player=Player(jobs[0]['output'],window);player.show()
-        wait_until(lambda:player.player.position()>250,timeout=15)
+        player=Player(jobs[0]['output'],window);frames=[]
+        player.video.videoSink().videoFrameChanged.connect(lambda frame:frames.append(frame.toImage()) if frame.isValid() else None)
+        player.show()
+        wait_until(lambda:player.player.position()>650 and frames and not frames[-1].isNull(),timeout=15)
+        frames[-1].save(str(folder/'播放器实际视频帧.png'))
         pos=player.player.position();duration=player.player.duration();player.grab().save(str(folder/'成片播放.png'))
         assert player.player.hasVideo() and player.player.error()==QMediaPlayer.Error.NoError
-        player.done(0)
-        bid=window.bid;window.close();QTest.qWait(100)
+        print('GUI: closing player',flush=True);player.done(0)
+        print('GUI: closing window',flush=True);bid=window.bid;window.close();QTest.qWait(100)
+        print('GUI: reopening',flush=True)
         reopened=MainWindow();reopened.show();assert len(reopened.assets['a'])==1
         set_combo(reopened.batch_combo,bid);reopened.load_batch();assert reopened.total_progress.value()==2
         reopened.close()
         return dict(imports=[1,2,1],completed=2,subtitle_frame=True,playback_ms=pos,playback_duration_ms=duration,session_reopen=True,errors=errors)
     finally:
+        faulthandler.cancel_dump_traceback_later();trace.close()
         if window.isVisible():window.close()
 
 
 def stress(folder):
     folder=Path(folder).resolve();folder.mkdir(parents=True,exist_ok=True);r=Runner();t=time.monotonic()
     base=folder/'tiny.mp4'
-    r.ffmpeg(['-f','lavfi','-i','testsrc2=s=64x112:r=30','-f','lavfi','-i','sine=frequency=400:sample_rate=48000','-t','.2','-c:v','libx264','-threads','2','-c:a','aac',base])
+    r.ffmpeg(['-f','lavfi','-i','testsrc2=s=64x112:r=30','-f','lavfi','-i','sine=frequency=400:sample_rate=48000','-t','0.2','-c:v','libx264','-threads','2','-c:a','aac',base])
     paths=[]
     for role,count in [('a',20),('b',500)]:
         dest=folder/role;dest.mkdir(exist_ok=True);files=[]
