@@ -1,0 +1,643 @@
+from __future__ import annotations
+import copy
+import json
+import os
+import random
+import shutil
+import threading
+import time
+import uuid
+from collections import Counter
+from pathlib import Path
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QLockFile
+from PySide6.QtGui import QDesktopServices, QFont, QColor
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
+    QPushButton,QTabWidget,QListWidget,QListWidgetItem,QFileDialog,QMessageBox,QLineEdit,
+    QComboBox,QSpinBox,QDoubleSpinBox,QCheckBox,QFormLayout,QGroupBox,QSplitter,
+    QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QDialog,QDialogButtonBox,
+    QProgressBar,QScrollArea,QAbstractItemView,QInputDialog,QColorDialog)
+from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput
+from PySide6.QtMultimediaWidgets import QVideoWidget
+from .runtime import data_dir,write_json
+from .service import SETTINGS,scan,run_batch,api_rules,job_output,write_report
+from .store import Store,identity
+from .planner import make_plan,parse_instruction,PlanError
+from .media import MediaEngine
+from .core import Cancelled
+from .subtitles import read_srt,write_srt,align_script
+from .editing import FramePreview
+
+
+STYLE='''
+QWidget { font-family: "Microsoft YaHei UI"; font-size: 13px; color: #24334a; }
+QMainWindow,QDialog { background: #f4f6fa; }
+QTabWidget::pane { background: white; border: 1px solid #dde3ec; border-radius: 8px; }
+QTabBar::tab { padding: 12px 25px; color: #66758a; }
+QTabBar::tab:selected { background: white; color: #1b65b9; border-bottom: 3px solid #2877c5; }
+QGroupBox { border: 1px solid #dce3ec; border-radius: 7px; margin-top: 18px; padding: 14px 10px 8px; font-weight: 600; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }
+QPushButton { background: #edf2f8; border: 1px solid #d8e1ec; border-radius: 5px; padding: 8px 14px; }
+QPushButton:hover { background: #e0ebf8; border-color: #a4bdd9; }
+QPushButton:disabled { color: #94a0b1; background: #f0f2f6; }
+QPushButton[primary="true"] { background: #246fbb; color: white; border-color: #246fbb; font-weight: 600; }
+QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QPlainTextEdit { background: white; border: 1px solid #d5deea; border-radius: 4px; padding: 5px; }
+QTableWidget,QListWidget { border: 1px solid #dce3ec; background: white; alternate-background-color: #f7f9fc; selection-background-color: #dceafb; selection-color: #16466e; }
+QHeaderView::section { background: #eef3f9; padding: 7px; border: none; border-bottom: 1px solid #dce3ec; font-weight: 600; }
+QProgressBar { border: none; border-radius: 5px; background: #e4ebf3; height: 16px; text-align: center; }
+QProgressBar::chunk { background: #3988cd; border-radius: 5px; }
+QLabel[muted="true"] { color: #788599; }
+'''
+
+
+def button(text,callback,primary=False):
+    b=QPushButton(text);b.clicked.connect(callback);b.setProperty('primary',primary);return b
+
+
+def combo(values):
+    w=QComboBox()
+    for name,value in values:w.addItem(name,value)
+    return w
+
+
+def set_combo(widget,value):
+    i=widget.findData(value)
+    if i>=0:widget.setCurrentIndex(i)
+
+
+def spin(lo,hi,value,decimals=None):
+    w=QSpinBox() if decimals is None else QDoubleSpinBox()
+    w.setRange(lo,hi)
+    if decimals is not None:w.setDecimals(decimals);w.setSingleStep(.1)
+    w.setValue(value);return w
+
+
+def table(headers):
+    w=QTableWidget(0,len(headers));w.setHorizontalHeaderLabels(headers);w.setAlternatingRowColors(True)
+    w.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    w.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    w.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    w.horizontalHeader().setStretchLastSection(True)
+    return w
+
+
+def cells(widget,row,values):
+    for col,v in enumerate(values):widget.setItem(row,col,QTableWidgetItem(str(v)))
+
+
+class Worker(QThread):
+    event=Signal(object);completed=Signal(object)
+    def __init__(self,func,parent=None):
+        super().__init__(parent);self.func=func;self.stop=threading.Event()
+    def run(self):
+        try:self.completed.emit(dict(value=self.func(self.stop,self.event.emit)))
+        except Cancelled:self.completed.emit(dict(cancelled=True))
+        except Exception as exc:self.completed.emit(dict(error=str(exc)[-2500:]))
+
+
+class Player(QDialog):
+    def __init__(self,path,parent=None):
+        super().__init__(parent);self.setWindowTitle('成片预览 · '+Path(path).name);self.resize(580,760)
+        layout=QVBoxLayout(self);self.video=QVideoWidget();layout.addWidget(self.video,1)
+        self.player=QMediaPlayer(self);self.audio=QAudioOutput(self);self.audio.setVolume(.8)
+        self.player.setAudioOutput(self.audio);self.player.setVideoOutput(self.video)
+        self.position=spin(0,100000,0,2);self.position.setSuffix(' 秒')
+        row=QHBoxLayout();row.addWidget(button('播放 / 暂停',self.toggle));row.addWidget(self.position)
+        row.addWidget(button('跳转',lambda:self.player.setPosition(round(self.position.value()*1000))))
+        layout.addLayout(row);self.state=QLabel();layout.addWidget(self.state)
+        self.player.positionChanged.connect(lambda t:self.position.setValue(t/1000))
+        self.player.durationChanged.connect(lambda t:self.position.setMaximum(t/1000))
+        self.player.errorOccurred.connect(lambda e,t:self.state.setText(t))
+        self.player.setSource(QUrl.fromLocalFile(str(Path(path).resolve())));self.player.play()
+    def toggle(self):
+        self.player.pause() if self.player.isPlaying() else self.player.play()
+    def done(self,result):
+        self.player.stop();super().done(result)
+
+
+SOUND=[('保留原声音（包含原音乐）','original'),('静音原片','mute'),('尝试去旧音乐，需试听','separate'),('使用独立口播/音效文件','external')]
+MUSIC=[('不添加新音乐','none'),('整批指定同一首','one'),('按前贴随机固定一首','random_a'),('每条成片随机一首','random_job')]
+
+
+class SoundControls(QGroupBox):
+    def __init__(self,title,side,musics):
+        super().__init__(title);self.side=side;self.musics=musics;f=QFormLayout(self)
+        self.sound=combo(SOUND);self.volume=spin(0,3,1.,2);self.voice=QLineEdit()
+        row=QHBoxLayout();row.addWidget(self.voice);row.addWidget(button('选择',self.pick_voice))
+        self.mode=combo(MUSIC if side=='a' else [('不添加新音乐','none'),('整批指定同一首','one'),('每条成片随机一首','random_job')])
+        self.music=QComboBox();self.refresh_music(musics)
+        self.music_volume=spin(0,2,.3,2);self.offset=spin(0,86400,0.,2);self.offset.setSuffix(' 秒')
+        f.addRow('原片声音',self.sound);f.addRow('口播/原声音量',self.volume);f.addRow('独立声音文件',row)
+        f.addRow('新音乐分配',self.mode);f.addRow('指定音乐',self.music);f.addRow('新音乐音量',self.music_volume);f.addRow('音乐起点',self.offset)
+        note=QLabel('混合音轨无法保证无损去音乐。分离也可能削弱游戏音效；请先试听样片。');note.setWordWrap(True);note.setProperty('muted',True);f.addRow(note)
+    def refresh_music(self,musics):
+        previous=self.music.currentData();self.music.clear();self.music.addItem('请选择音乐','')
+        for a in musics:self.music.addItem(a['name'],a['path'])
+        set_combo(self.music,previous)
+    def pick_voice(self):
+        p,_=QFileDialog.getOpenFileName(self,'选择独立口播/音效','', '声音 (*.wav *.mp3 *.m4a *.flac *.aac *.mp4);;所有文件 (*)')
+        if p:self.voice.setText(p)
+    def value(self):
+        side=self.side
+        return {side+'_sound':self.sound.currentData(),side+'_volume':self.volume.value(),side+'_voice':self.voice.text().strip(),
+            side+'_music':self.music.currentData() or '',side+'_music_mode':self.mode.currentData(),side+'_music_volume':self.music_volume.value(),side+'_music_start':self.offset.value()}
+    def load(self,s):
+        x=self.side;set_combo(self.sound,s.get(x+'_sound','original'));self.volume.setValue(s.get(x+'_volume',1.))
+        self.voice.setText(s.get(x+'_voice',''));set_combo(self.mode,s.get(x+'_music_mode','none'));set_combo(self.music,s.get(x+'_music',''))
+        self.music_volume.setValue(s.get(x+'_music_volume',.3));self.offset.setValue(s.get(x+'_music_start',0.))
+
+
+class SubtitleDialog(QDialog):
+    def __init__(self,source,settings,rows,parent):
+        super().__init__(parent);self.source=source;self.settings=copy.deepcopy(settings);self.worker=None
+        self.setWindowTitle('字幕校正 · '+source['name']);self.resize(1150,770)
+        layout=QVBoxLayout(self);note=QLabel('识别后可直接改文字和起止时间。提供文稿可生成初步对齐，保存前请检查预览。');layout.addWidget(note)
+        split=QSplitter();layout.addWidget(split,1);left=QWidget();l=QVBoxLayout(left);split.addWidget(left)
+        self.rows_table=table(['开始（秒）','结束（秒）','字幕文字']);self.rows_table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked|QAbstractItemView.EditTrigger.EditKeyPressed)
+        l.addWidget(self.rows_table,1);self.load_rows(rows or [])
+        row=QHBoxLayout();row.addWidget(button('离线识别口播',self.recognize,True));row.addWidget(button('导入 SRT',self.import_srt));row.addWidget(button('导出 SRT',self.export_srt));l.addLayout(row)
+        row=QHBoxLayout();row.addWidget(button('添加字幕',self.add_row));row.addWidget(button('删除选中',self.remove_rows));l.addLayout(row)
+        self.script=QPlainTextEdit();self.script.setPlaceholderText('可粘贴完整口播文稿。建议先识别，再按文稿生成初步时间。');self.script.setMaximumHeight(100);l.addWidget(self.script)
+        l.addWidget(button('按文稿初步对齐到当前时间',self.align))
+        self.status=QLabel('尚未修改');self.status.setWordWrap(True);l.addWidget(self.status)
+        self.frame=FramePreview(source['path'],settings,self);split.addWidget(self.frame)
+        self.frame.refresh.clicked.connect(self.preview)
+        split.setSizes([670,420])
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.save);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
+    def load_rows(self,rows):
+        self.rows_table.setRowCount(len(rows))
+        for n,row in enumerate(rows):cells(self.rows_table,n,[f'{row["start"]:.3f}',f'{row["end"]:.3f}',row['text']])
+    def rows(self):
+        result=[];last=0.
+        for n in range(self.rows_table.rowCount()):
+            try:start=float(self.rows_table.item(n,0).text());end=float(self.rows_table.item(n,1).text());text=self.rows_table.item(n,2).text().strip()
+            except (ValueError,AttributeError):raise ValueError(f'第{n+1}条时间或文字为空/无效。')
+            if not text or not 0<=start<end<=self.source['duration']+.05 or start<last-.01:
+                raise ValueError(f'第{n+1}条时间超出素材、重叠或为空，请修正。')
+            last=end;result.append(dict(start=start,end=end,text=text))
+        return result
+    def add_row(self):
+        n=self.rows_table.rowCount();self.rows_table.setRowCount(n+1)
+        start=float(self.rows_table.item(n-1,1).text()) if n and self.rows_table.item(n-1,1) else 0
+        cells(self.rows_table,n,[str(start),str(min(self.source['duration'],start+2)),'填写字幕'])
+    def remove_rows(self):
+        for row in sorted({i.row() for i in self.rows_table.selectedIndexes()},reverse=True):self.rows_table.removeRow(row)
+    def recognize(self):
+        if self.worker and self.worker.isRunning():return
+        self.status.setText('正在本机离线识别，首次可能需要几十秒…')
+        def work(stop,notify):
+            e=MediaEngine(stop,lambda t:notify(dict(type='log',text=t)))
+            try:return e.ensure_subtitles(self.source['path'],self.settings)
+            finally:e.close()
+        self.worker=Worker(work,self);self.worker.event.connect(lambda e:self.status.setText(e['text']));self.worker.completed.connect(self.recognized);self.worker.start()
+    def recognized(self,result):
+        self.worker.wait()
+        if 'value' in result:self.load_rows(result['value']);self.status.setText('识别完成，请校正文字和时间。没有口播时可能没有字幕。')
+        elif 'error' in result:self.status.setText(result['error'])
+    def import_srt(self):
+        p,_=QFileDialog.getOpenFileName(self,'导入字幕','','字幕 (*.srt)')
+        if p:
+            try:self.load_rows(read_srt(Path(p)));self.status.setText('已导入字幕，请检查时间。')
+            except Exception as exc:QMessageBox.warning(self,'字幕错误',str(exc))
+    def export_srt(self):
+        try:
+            rows=self.rows();p,_=QFileDialog.getSaveFileName(self,'保存字幕',self.source['name']+'.srt','字幕 (*.srt)')
+            if p:write_srt(Path(p),rows)
+        except Exception as exc:QMessageBox.warning(self,'字幕错误',str(exc))
+    def align(self):
+        try:self.load_rows(align_script(self.script.toPlainText(),self.rows(),self.source['duration']));self.status.setText('已生成可编辑的初步时间。文稿对齐不是精确音素对齐，务必检查。')
+        except Exception as exc:QMessageBox.warning(self,'对齐问题',str(exc))
+    def preview(self):
+        try:self.frame.render(dict(self.settings,subtitles=True),self.rows())
+        except Exception as exc:QMessageBox.warning(self,'字幕错误',str(exc))
+    def save(self):
+        try:self.result_rows=self.rows();self.accept()
+        except Exception as exc:QMessageBox.warning(self,'字幕错误',str(exc))
+    def done(self,result):
+        if self.worker and self.worker.isRunning():self.worker.stop.set();self.worker.wait()
+        self.frame.stop();super().done(result)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio 1.0');self.resize(1220,880);self.setMinimumSize(990,720)
+        self.store=Store();self.assets={'a':[],'b':[],'music':[]};self.overrides={};self.plan=[];self.plan_settings=[];self.plan_assets={};self.bid=None;self.worker=None;self.last_preview='';self.api_key='';self.api_config={}
+        self.setAcceptDrops(True)
+        root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root);layout.setContentsMargins(22,16,22,14)
+        header=QHBoxLayout();brand=QLabel('混剪工坊');brand.setStyleSheet('font-size:25px;font-weight:700;color:#15354f;');header.addWidget(brand)
+        tagline=QLabel('前贴 × 游戏素材  /  本机批量制作');tagline.setProperty('muted',True);header.addWidget(tagline);header.addStretch();header.addWidget(button('使用说明',self.help));layout.addLayout(header)
+        self.tabs=QTabWidget();layout.addWidget(self.tabs,1)
+        self.material_tab();self.settings_tab();self.plan_tab();self.queue_tab();self.history_tab()
+        self.footer=QLabel('所有视频、字幕识别和音乐分离均在本机处理。');self.footer.setProperty('muted',True);layout.addWidget(self.footer)
+        self.load_session();self.refresh_assets();self.refresh_batches()
+    def notify_error(self,exc):QMessageBox.warning(self,'请检查',str(exc)[-2500:])
+    def busy(self):return self.worker is not None and self.worker.isRunning()
+    def start_work(self,func,done):
+        if self.busy():self.notify_error('当前正在处理，请先暂停或等待结束。');return False
+        self.worker=Worker(func,self);self.worker.event.connect(self.on_worker_event)
+        def completed(result):
+            self.worker.wait();self.cancel_work.setEnabled(False);self.footer.setText('就绪 · 数据保存在 '+str(data_dir()))
+            if 'error' in result:self.notify_error(result['error'])
+            done(result)
+        self.worker.completed.connect(completed);self.cancel_work.setEnabled(True);self.worker.start();return True
+    def on_worker_event(self,e):
+        if e['type']=='log':self.log.appendPlainText(e['text']);self.footer.setText(e['text'][:160])
+        elif e['type']=='job':
+            if self.bid:
+                row=e['number']-1;self.jobs_table.setItem(row,3,QTableWidgetItem(self.status_name(e['status'])))
+                if 'output' in e:self.jobs_table.setItem(row,4,QTableWidgetItem(e['output']))
+                if 'error' in e:self.jobs_table.setItem(row,5,QTableWidgetItem(e['error']))
+                complete=sum(1 for n in range(self.jobs_table.rowCount()) if self.jobs_table.item(n,3) and self.jobs_table.item(n,3).text()=='完成')
+                self.total_progress.setMaximum(max(1,self.jobs_table.rowCount()));self.total_progress.setValue(complete)
+                self.queue_status.setText(f'完成 {complete} / {self.jobs_table.rowCount()} · 当前第{e["number"]}条')
+        elif e['type']=='progress':self.current_progress.setValue(e['value'])
+    def material_tab(self):
+        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
+        row=QHBoxLayout();row.addWidget(QLabel('游戏 / 历史分组'));self.game=QLineEdit('默认游戏');row.addWidget(self.game);self.recursive=QCheckBox('导入文件夹包含子文件夹');self.recursive.setChecked(True);row.addWidget(self.recursive);l.addLayout(row)
+        note=QLabel('同一列表按文件内容去重；可拖入素材。前贴单独设置可覆盖整批设置，主视频默认保留原声。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
+        row=QHBoxLayout();self.lists={};self.counts={}
+        for role,title in [('a','A · AI前贴'),('b','B · 游戏主视频'),('music','音乐库')]:
+            box=QGroupBox(title);bl=QVBoxLayout(box);self.counts[role]=QLabel('0条素材');bl.addWidget(self.counts[role])
+            w=QListWidget();w.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection);self.lists[role]=w;bl.addWidget(w,1)
+            br=QHBoxLayout();br.addWidget(button('添加文件',lambda checked=False,r=role:self.import_files(r)));br.addWidget(button('添加文件夹',lambda checked=False,r=role:self.import_folder(r)));bl.addLayout(br)
+            br=QHBoxLayout();br.addWidget(button('移除选中',lambda checked=False,r=role:self.remove_assets(r)));br.addWidget(button('播放原片',lambda checked=False,r=role:self.play_source(r)));bl.addLayout(br)
+            if role=='a':
+                bl.addWidget(button('单独设置 / 指定使用次数',self.edit_intro));bl.addWidget(button('编辑 / 识别字幕',self.edit_subtitles,True))
+            row.addWidget(box,1)
+        l.addLayout(row,1);l.addWidget(button('下一步：设置画面与声音',lambda:self.tabs.setCurrentIndex(1),True));self.tabs.addTab(page,'① 素材')
+    def settings_tab(self):
+        scroll=QScrollArea();scroll.setWidgetResizable(True);page=QWidget();scroll.setWidget(page);l=QVBoxLayout(page)
+        row=QHBoxLayout();box=QGroupBox('画面与导出');f=QFormLayout(box)
+        self.resolution=combo([('竖屏 720 × 1280','720x1280'),('竖屏 1080 × 1920','1080x1920'),('横屏 1280 × 720','1280x720'),('测试 360 × 640','360x640')])
+        self.fps=combo([(str(n)+' fps',n) for n in [30,25,24,60]]);self.fit=combo([('完整显示，边缘留黑','pad'),('填满画面，裁切边缘','crop')])
+        self.transition=combo([('硬切（推荐，最快）','cut'),('淡入淡出','fade'),('溶解','dissolve'),('向左擦除','wipeleft'),('向左滑动','slideleft')])
+        self.transition_duration=spin(.1,3,.5,2);self.audio_transition=combo([('连接处直接切换','cut'),('声音交叉渐变','crossfade')])
+        self.encoder=combo([('NVIDIA优先，失败自动CPU','nvidia'),('CPU兼容编码','cpu')]);self.performance=combo([('后台模式 · 顺序导出','background'),('全速模式 · 增加CPU线程','full')])
+        self.crf=spin(16,28,20);self.output=QLineEdit(str(Path.home()/'Videos'/'混剪成片'))
+        br=QHBoxLayout();br.addWidget(self.output);br.addWidget(button('选择',self.pick_output))
+        for label,w in [('尺寸',self.resolution),('帧率',self.fps),('画面适配',self.fit),('转场',self.transition),('转场秒数',self.transition_duration),('声音连接',self.audio_transition),('编码',self.encoder),('性能',self.performance),('质量值（越低越清晰）',self.crf)]:f.addRow(label,w)
+        f.addRow('输出文件夹',br);note=QLabel('非硬切转场会重叠两段视频，成片会缩短相应时长；可能遮住连接处口播。');note.setWordWrap(True);note.setProperty('muted',True);f.addRow(note)
+        row.addWidget(box,1);subs=QGroupBox('前贴字幕');sf=QFormLayout(subs)
+        self.subtitles=QCheckBox('自动识别并烧录前贴字幕');self.language=combo([('中文','zh'),('自动语言','auto'),('英文','en'),('日文','ja'),('韩文','ko')])
+        self.vocabulary=QLineEdit();self.vocabulary.setPlaceholderText('游戏名、人名、专有词，帮助识别')
+        self.font_size=spin(18,100,52);self.margin=spin(0,500,110);self.outline=spin(0,8,3);self.subtitle_position=combo([('底部','bottom'),('中间','center'),('顶部','top')]);self.font_color=QLineEdit('#FFFFFF')
+        for label,w in [('',self.subtitles),('语言',self.language),('术语提示',self.vocabulary),('字号（按720p）',self.font_size),('距边缘（按720p）',self.margin),('描边',self.outline),('字幕位置',self.subtitle_position),('文字颜色',self.font_color)]:sf.addRow(label,w)
+        sf.addRow(button('选择文字颜色',self.pick_color));note=QLabel('字幕可在“素材”中逐条校正。已有硬字幕不会自动消除，叠加前请检查。');note.setWordWrap(True);note.setProperty('muted',True);sf.addRow(note);row.addWidget(subs,1);l.addLayout(row)
+        row=QHBoxLayout();self.a_sound=SoundControls('前贴声音', 'a',[]);self.b_sound=SoundControls('主视频声音','b',[]);row.addWidget(self.a_sound);row.addWidget(self.b_sound);l.addLayout(row)
+        l.addWidget(button('下一步：生成组合计划',lambda:self.tabs.setCurrentIndex(2),True));self.tabs.addTab(scroll,'② 画面与声音')
+    def plan_tab(self):
+        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
+        self.instruction=QLineEdit();self.instruction.setPlaceholderText('例如：生成1000条，均匀分配，前贴01用200次，不重复')
+        row=QHBoxLayout();row.addWidget(self.instruction,1);row.addWidget(button('理解规则',self.parse_text,True));row.addWidget(button('AI接口设置',self.api_dialog));l.addLayout(row)
+        self.rule_hint=QLabel('默认使用离线规则解析。也可自行配置兼容接口；在线仅发送此处的指令文字。');self.rule_hint.setProperty('muted',True);l.addWidget(self.rule_hint)
+        row=QHBoxLayout();row.addWidget(QLabel('输出数量'));self.quantity=spin(1,100000,1000);row.addWidget(self.quantity)
+        self.mode=combo([('严格均匀（指定次数之外均匀）','balanced'),('随机分配','random')]);row.addWidget(self.mode);row.addWidget(QLabel('随机种子'));self.seed=spin(0,2147483647,42);row.addWidget(self.seed)
+        row.addWidget(button('生成 / 重新生成计划',self.generate_plan,True));l.addLayout(row)
+        self.plan_summary=QLabel('计划尚未生成。生成后可双击前贴或主视频列更换配对，再检查无重复和使用次数。');self.plan_summary.setWordWrap(True);l.addWidget(self.plan_summary)
+        self.plan_table=table(['序号','前贴','主视频','前贴音乐','主视频音乐','转场']);self.plan_table.cellDoubleClicked.connect(self.edit_pair);l.addWidget(self.plan_table,1)
+        row=QHBoxLayout();row.addWidget(button('预览选中成片',self.preview,True));row.addWidget(button('播放上次预览',self.play_last));row.addWidget(button('保存计划 CSV',self.export_plan));row.addStretch();row.addWidget(button('固定计划并创建导出任务',self.create_batch,True));l.addLayout(row)
+        self.tabs.addTab(page,'③ 组合计划')
+    def queue_tab(self):
+        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
+        row=QHBoxLayout();self.batch_combo=QComboBox();row.addWidget(self.batch_combo,1);row.addWidget(button('载入任务',self.load_batch));row.addWidget(button('刷新',self.refresh_batches));l.addLayout(row)
+        self.queue_status=QLabel('尚未选择导出任务');l.addWidget(self.queue_status)
+        self.total_progress=QProgressBar();self.current_progress=QProgressBar();l.addWidget(self.total_progress);l.addWidget(self.current_progress)
+        self.jobs_table=table(['序号','前贴','主视频','状态','输出文件','错误']);self.jobs_table.cellDoubleClicked.connect(self.play_job);l.addWidget(self.jobs_table,1)
+        row=QHBoxLayout();row.addWidget(button('开始 / 继续待处理',lambda:self.start_batch(False),True));row.addWidget(button('重试失败 + 继续',lambda:self.start_batch(True)))
+        self.cancel_work=button('暂停当前处理',self.pause);self.cancel_work.setEnabled(False);row.addWidget(self.cancel_work)
+        row.addWidget(button('打开输出目录',self.open_output));row.addWidget(button('重定位遗失素材',self.relocate));row.addWidget(button('放弃未完成任务',self.abandon));l.addLayout(row)
+        self.log=QPlainTextEdit();self.log.setReadOnly(True);self.log.setMaximumBlockCount(800);self.log.setMaximumHeight(130);l.addWidget(self.log)
+        self.tabs.addTab(page,'④ 导出队列')
+    def history_tab(self):
+        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
+        self.history_summary=QLabel();l.addWidget(self.history_summary);self.history_table=table(['游戏','前贴身份','主视频身份','完成时间','输出位置']);l.addWidget(self.history_table,1)
+        row=QHBoxLayout();row.addWidget(button('刷新历史',self.refresh_history));row.addWidget(button('备份任务与历史',self.backup));row.addWidget(button('恢复备份',self.restore));row.addWidget(button('导出历史 CSV',self.export_history));row.addWidget(button('清理媒体缓存',self.clear_cache));row.addStretch();l.addLayout(row)
+        note=QLabel('历史仅在本机保存，成功成片才记入历史。删除成片不会清除配对。完整备份包含任务与配方，不包含源视频。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
+        self.tabs.addTab(page,'⑤ 本机历史');self.refresh_history()
+    def settings(self):
+        s=dict(SETTINGS)
+        for key in ['resolution','fps','fit','transition','audio_transition','encoder','performance','subtitle_position','language']:s[key]=getattr(self,key).currentData()
+        for key in ['transition_duration','crf','font_size','margin','outline']:s[key]=getattr(self,key).value()
+        s.update(subtitles=self.subtitles.isChecked(),vocabulary=self.vocabulary.text(),font_color=self.font_color.text(),output=self.output.text().strip(),seed=self.seed.value())
+        s.update(self.a_sound.value());s.update(self.b_sound.value());return s
+    def apply_settings(self,s):
+        for key in ['resolution','fps','fit','transition','audio_transition','encoder','performance','subtitle_position','language']:set_combo(getattr(self,key),s.get(key,SETTINGS[key]))
+        for key in ['transition_duration','crf','font_size','margin','outline']:getattr(self,key).setValue(s.get(key,SETTINGS[key]))
+        self.subtitles.setChecked(s.get('subtitles',False));self.vocabulary.setText(s.get('vocabulary',''));self.font_color.setText(s.get('font_color','#FFFFFF'));self.output.setText(s.get('output') or str(Path.home()/'Videos'/'混剪成片'))
+        self.a_sound.load(s);self.b_sound.load(s)
+    def save_session(self):
+        write_json(data_dir()/'session.json',dict(assets=self.assets,overrides=self.overrides,settings=self.settings(),game=self.game.text(),quantity=self.quantity.value(),mode=self.mode.currentData(),seed=self.seed.value(),api=self.api_config))
+    def load_session(self):
+        try:
+            s=json.loads((data_dir()/'session.json').read_text(encoding='utf-8'));self.assets=s.get('assets',self.assets);self.overrides=s.get('overrides',{})
+            self.refresh_assets();self.apply_settings(s.get('settings',{}));self.game.setText(s.get('game','默认游戏'));self.quantity.setValue(s.get('quantity',1000));set_combo(self.mode,s.get('mode','balanced'));self.seed.setValue(s.get('seed',42));self.api_config=s.get('api',{})
+        except (OSError,ValueError,KeyError):pass
+    def refresh_assets(self):
+        for role,w in self.lists.items():
+            w.clear()
+            for n,a in enumerate(self.assets[role],1):
+                prefix=f'{n:02}  ' if role=='a' else ''
+                extra=''
+                if role=='a' and a['id'] in self.overrides:
+                    override=self.overrides[a['id']]
+                    extra=' · 单独设置'
+                    if override.get('fixed',-1)>=0:extra+=f' · {override["fixed"]}次'
+                    if override.get('subtitle_rows') is not None:extra+=' · 已校正字幕'
+                item=QListWidgetItem(f'{prefix}{a["name"]}\n{a["duration"]:.1f}s · {a["width"]}×{a["height"]}{extra}');item.setToolTip(a['path']);item.setData(Qt.ItemDataRole.UserRole,a['id']);w.addItem(item)
+            self.counts[role].setText(f'{len(self.assets[role])} 条素材')
+        self.a_sound.refresh_music(self.assets['music']);self.b_sound.refresh_music(self.assets['music'])
+    def import_files(self,role):
+        paths,_=QFileDialog.getOpenFileNames(self,'选择素材','','媒体 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.wav *.mp3 *.m4a *.flac *.aac);;所有文件 (*)')
+        if paths:self.import_paths(role,paths)
+    def import_folder(self,role):
+        p=QFileDialog.getExistingDirectory(self,'选择素材文件夹（支持网络路径）')
+        if p:self.import_paths(role,[p])
+    def import_paths(self,role,paths):
+        if self.busy():self.notify_error('正在处理，请先暂停或等处理结束再导入。');return
+        expanded=[];extensions={'.mp4','.mov','.mkv','.avi','.webm','.m4v'}
+        if role=='music':extensions|={'.wav','.mp3','.m4a','.flac','.aac','.ogg'}
+        for p in paths:
+            p=Path(p)
+            if p.is_dir():expanded.extend(str(x) for x in (p.rglob('*') if self.recursive.isChecked() else p.glob('*')) if x.is_file() and x.suffix.lower() in extensions)
+            elif p.suffix.lower() in extensions:expanded.append(str(p))
+        expanded=sorted(set(expanded))
+        if not expanded:self.notify_error('没有找到支持的媒体文件。');return
+        def done(result):
+            if 'value' not in result:return
+            value=result['value'];existing={a['id'] for a in self.assets[role]};self.assets[role].extend(a for a in value['assets'] if a['id'] not in existing);self.refresh_assets();self.save_session()
+            if value['errors']:self.notify_error('以下素材未导入：\n'+'\n'.join(value['errors'][:12]))
+            self.footer.setText(f'导入完成：{len(value["assets"])}条有效素材，相同内容自动去重。')
+        self.start_work(lambda stop,notify:scan(expanded,role,stop,notify),done)
+    def selected(self,role):
+        items=self.lists[role].selectedItems()
+        if not items:raise ValueError('请先选中一条'+('前贴' if role=='a' else '素材')+'。')
+        key=items[0].data(Qt.ItemDataRole.UserRole);return next(a for a in self.assets[role] if a['id']==key)
+    def remove_assets(self,role):
+        if self.busy():return
+        selected={i.data(Qt.ItemDataRole.UserRole) for i in self.lists[role].selectedItems()};self.assets[role]=[a for a in self.assets[role] if a['id'] not in selected];self.refresh_assets();self.save_session()
+    def play_source(self,role):
+        try:Player(self.selected(role)['path'],self).exec()
+        except Exception as exc:self.notify_error(exc)
+    def edit_intro(self):
+        if self.busy():return
+        try:a=self.selected('a')
+        except Exception as exc:self.notify_error(exc);return
+        dialog=QDialog(self);dialog.setWindowTitle('单独设置 · '+a['name']);l=QVBoxLayout(dialog)
+        controls=SoundControls('覆盖此条前贴的声音设置','a',self.assets['music']);controls.load(dict(self.settings(),**self.overrides.get(a['id'],{})));l.addWidget(controls)
+        fixed=spin(-1,len(self.assets['b']),self.overrides.get(a['id'],{}).get('fixed',-1));fixed.setSpecialValueText('自动分配');f=QFormLayout();f.addRow('指定使用次数（0=不用）',fixed);l.addLayout(f)
+        inherit=QCheckBox('移除此条声音覆盖，使用整批声音设置（保留字幕和指定次数）');l.addWidget(inherit)
+        note=QLabel('指定音乐模式会覆盖整批音乐。随机按前贴 / 每条成片模式仍按固定随机种子分配。');note.setWordWrap(True);l.addWidget(note)
+        bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);bb.accepted.connect(dialog.accept);bb.rejected.connect(dialog.reject);l.addWidget(bb)
+        if dialog.exec():
+            previous=self.overrides.get(a['id'],{});rows=previous.get('subtitle_rows')
+            self.overrides[a['id']]=dict(fixed=fixed.value(),subtitle_rows=rows)
+            if not inherit.isChecked():self.overrides[a['id']].update(controls.value())
+            self.refresh_assets();self.save_session()
+    def edit_subtitles(self):
+        if self.busy():return
+        try:a=self.selected('a')
+        except Exception as exc:self.notify_error(exc);return
+        override=self.overrides.get(a['id'],{});dialog=SubtitleDialog(a,self.settings(),override.get('subtitle_rows'),self)
+        if dialog.exec():
+            self.overrides.setdefault(a['id'],{})['subtitle_rows']=dialog.result_rows;self.subtitles.setChecked(True);self.refresh_assets();self.save_session()
+    def pick_output(self):
+        p=QFileDialog.getExistingDirectory(self,'选择成片保存位置',self.output.text())
+        if p:self.output.setText(p)
+    def pick_color(self):
+        c=QColorDialog.getColor(QColor(self.font_color.text()),self)
+        if c.isValid():self.font_color.setText(c.name().upper())
+    def api_dialog(self):
+        d=QDialog(self);d.setWindowTitle('可选语言模型接口');l=QVBoxLayout(d);f=QFormLayout();l.addLayout(f)
+        endpoint=QLineEdit(self.api_config.get('endpoint','https://api.openai.com/v1'));model=QLineEdit(self.api_config.get('model',''));key=QLineEdit(self.api_key);key.setEchoMode(QLineEdit.EchoMode.Password);enabled=QCheckBox('点击“理解规则”时使用在线模型');enabled.setChecked(self.api_config.get('enabled',False))
+        f.addRow('接口根地址（含 /v1）',endpoint);f.addRow('模型名称',model);f.addRow('API Key（仅本次会话）',key);f.addRow(enabled)
+        note=QLabel('仅发送组合指令文字，不发送视频、音频或文件路径。调用费用由所选服务产生；不配置接口也可用离线规则和表单。密钥不保存到磁盘。');note.setWordWrap(True);l.addWidget(note)
+        bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);bb.accepted.connect(d.accept);bb.rejected.connect(d.reject);l.addWidget(bb)
+        if d.exec():self.api_config=dict(endpoint=endpoint.text().strip(),model=model.text().strip(),enabled=enabled.isChecked());self.api_key=key.text().strip();self.save_session()
+    def apply_rules(self,rules):
+        if not 1<=rules['count']<=100000:raise ValueError('数量须在1～100000之间。')
+        self.quantity.setValue(rules['count']);set_combo(self.mode,rules['mode'])
+        for a in self.assets['a']:self.overrides.setdefault(a['id'],{})['fixed']=-1
+        for index,n in rules['fixed'].items():self.overrides[self.assets['a'][int(index)]['id']]['fixed']=n
+        self.refresh_assets();self.rule_hint.setText('规则已填入表单与前贴次数；请生成计划检查实际分配。');self.save_session()
+    def parse_text(self):
+        if self.busy():return
+        text=self.instruction.text();n=len(self.assets['a'])
+        if self.api_config.get('enabled'):
+            if not self.api_config.get('model') or not self.api_key:self.notify_error('请先填写模型和本次会话密钥。');return
+            config=self.api_config.copy();key=self.api_key
+            def done(r):
+                if 'value' in r:
+                    try:self.apply_rules(r['value'])
+                    except Exception as exc:self.notify_error(exc)
+            self.start_work(lambda stop,notify:api_rules(text,n,config['endpoint'],config['model'],key),done)
+        else:
+            try:self.apply_rules(parse_instruction(text,n))
+            except Exception as exc:self.notify_error(exc)
+    def fixed(self):return {a['id']:self.overrides[a['id']]['fixed'] for a in self.assets['a'] if self.overrides.get(a['id'],{}).get('fixed',-1)>=0}
+    def materialize(self,pairs,s):
+        rng=random.Random(s['seed']);musics=self.assets['music'];am={a['id']:copy.deepcopy(a) for role in self.assets.values() for a in role};settings=[];by_a={}
+        for a,b in pairs:
+            job=copy.deepcopy(s);override=self.overrides.get(a,{})
+            job.update({k:v for k,v in override.items() if k!='fixed'});media_ids={}
+            for side in ['a','b']:
+                mode=job.get(side+'_music_mode','none')
+                if mode=='none':job[side+'_music']=''
+                elif mode in ('random_a','random_job'):
+                    if not musics:raise ValueError('随机音乐需要先添加音乐库。')
+                    if mode=='random_a':
+                        if a not in by_a:by_a[a]=rng.choice(musics)['path']
+                        job[side+'_music']=by_a[a]
+                    else:job[side+'_music']=rng.choice(musics)['path']
+                elif mode=='one' and not job[side+'_music']:raise ValueError('指定音乐模式需要选择一首音乐。')
+                for field in [side+'_music',side+'_voice']:
+                    p=job.get(field,'')
+                    if not p or field.endswith('_voice') and job[side+'_sound']!='external':continue
+                    existing=next((key for key,asset in am.items() if asset['path']==p),None)
+                    if not existing:
+                        asset=scan([p],'music')['assets']
+                        if not asset:raise ValueError('无法读取独立声音文件：'+p)
+                        item=asset[0];existing=item['id'];am[existing]=item
+                    media_ids[field]=existing
+                if job[side+'_sound']=='external' and not job.get(side+'_voice'):raise ValueError('独立声音模式需要指定口播/音效文件。')
+            job.update(media_ids=media_ids,dependency_ids=list(set(media_ids.values())));settings.append(job)
+        used=set(x for p in pairs for x in p)|{x for j in settings for x in j['dependency_ids']}
+        return {k:v for k,v in am.items() if k in used},settings
+    def generate_plan(self):
+        if self.busy():return
+        try:
+            s=self.settings()
+            if not self.game.text().strip():raise ValueError('请填写游戏名称。')
+            if not s['output']:raise ValueError('请选择成片保存位置。')
+            if not __import__('re').fullmatch('#[0-9a-fA-F]{6}',s['font_color']):raise ValueError('字幕颜色请使用 #FFFFFF 这样的格式。')
+            pairs=make_plan([a['id'] for a in self.assets['a']],[a['id'] for a in self.assets['b']],self.quantity.value(),self.mode.currentData(),self.fixed(),self.store.excluded(self.game.text().strip()),self.seed.value())
+            am,settings=self.materialize(pairs,s)
+            self.plan,self.plan_assets,self.plan_settings=pairs,am,settings;self.plan_base=s;self.plan_game=self.game.text().strip();self.plan_fixed=self.fixed();self.plan_mode=self.mode.currentData();self.plan_fingerprint=self.current_fingerprint();self.render_plan();self.save_session()
+        except Exception as exc:self.notify_error(exc)
+    def render_plan(self):
+        self.plan_table.setRowCount(len(self.plan))
+        for n,((a,b),s) in enumerate(zip(self.plan,self.plan_settings)):cells(self.plan_table,n,[n+1,self.plan_assets[a]['name'],self.plan_assets[b]['name'],Path(s['a_music']).name if s['a_music'] else '无',Path(s['b_music']).name if s['b_music'] else '无',s['transition']])
+        ac,bc=Counter(a for a,b in self.plan),Counter(b for a,b in self.plan)
+        self.plan_summary.setText(f'{len(self.plan)}条 · {len(set(self.plan))}个独立配对 · 前贴分配：'+ '，'.join(f'{n:02}用{ac[a["id"]]}次' for n,a in enumerate(self.assets['a'],1))+f' · 主视频使用{min([bc[x["id"]] for x in self.assets["b"]],default=0)}～{max(bc.values(),default=0)}次。计划已固定，改动整批设置后请重新生成。')
+    def edit_pair(self,row,col):
+        if self.busy() or col not in (1,2) or not self.plan:return
+        try:self.check_current_plan()
+        except Exception as exc:self.notify_error(exc);return
+        role='a' if col==1 else 'b';options=self.assets[role];labels=[f'{n+1:03} · {a["name"]}' for n,a in enumerate(options)]
+        text,ok=QInputDialog.getItem(self,'修改配对','选择素材',labels,0,False)
+        if not ok:return
+        key=options[labels.index(text)]['id'];old=self.plan[row];pair=(key,old[1]) if role=='a' else (old[0],key)
+        proposed=self.plan.copy();proposed[row]=pair
+        try:
+            self.validate_plan(proposed);am,settings=self.materialize(proposed,self.plan_base);self.plan,self.plan_assets,self.plan_settings=proposed,am,settings;self.render_plan()
+        except Exception as exc:self.notify_error(exc)
+    def validate_plan(self,pairs=None):
+        self.check_current_plan()
+        pairs=self.plan if pairs is None else pairs
+        if not pairs:raise ValueError('请先生成组合计划。')
+        if len(set(pairs))!=len(pairs):raise ValueError('修改后出现重复配对。')
+        if set(pairs)&self.store.excluded(self.plan_game):raise ValueError('配对已被历史或另一任务使用，请重新生成。')
+        ac,bc=Counter(a for a,b in pairs),Counter(b for a,b in pairs)
+        if any(ac[a]!=n for a,n in self.plan_fixed.items()):raise ValueError('修改后不满足已指定的前贴使用次数。')
+        if self.plan_mode=='balanced':
+            av=[ac[a['id']] for a in self.assets['a'] if a['id'] not in self.plan_fixed];bv=[bc[b['id']] for b in self.assets['b']]
+            if av and max(av)-min(av)>1 or bv and max(bv)-min(bv)>1:raise ValueError('修改后不再严格均匀，请重新生成或使用随机计划。')
+    def current_fingerprint(self):
+        return json.dumps(dict(assets=self.assets,overrides=self.overrides,settings=self.settings(),game=self.game.text().strip(),quantity=self.quantity.value(),mode=self.mode.currentData()),sort_keys=True,ensure_ascii=False)
+    def check_current_plan(self):
+        if not self.plan:raise ValueError('请先生成组合计划。')
+        if self.current_fingerprint()!=self.plan_fingerprint:raise ValueError('素材、声音、字幕或规则已修改，请重新生成计划后再预览或创建任务。已创建的任务仍保留原设置。')
+    def preview(self):
+        if self.busy():return
+        try:
+            self.check_current_plan()
+            row=max(0,self.plan_table.currentRow());a,b=self.plan[row];s=copy.deepcopy(self.plan_settings[row]);am=copy.deepcopy(self.plan_assets)
+            out=data_dir()/'previews'/(uuid.uuid4().hex+'.mp4')
+            def work(stop,notify):
+                for key in [a,b,*s['dependency_ids']]:
+                    if identity(am[key]['path'])!=key:raise ValueError('素材内容改变，请重新导入并生成计划。')
+                e=MediaEngine(stop,lambda t:notify(dict(type='log',text=t)))
+                try:return str(e.render_pair(am[a]['path'],am[b]['path'],s,out))
+                finally:e.close()
+            def done(r):
+                if 'value' in r:self.last_preview=r['value'];Player(self.last_preview,self).exec()
+            self.start_work(work,done)
+        except Exception as exc:self.notify_error(exc)
+    def play_last(self):
+        if self.last_preview and Path(self.last_preview).exists():Player(self.last_preview,self).exec()
+        else:self.notify_error('请先生成一条成片预览。')
+    def export_plan(self):
+        try:
+            if not self.plan:raise ValueError('请先生成计划。')
+            p,_=QFileDialog.getSaveFileName(self,'导出计划','组合计划.csv','CSV (*.csv)')
+            if p:self.table_csv(self.plan_table,p)
+        except Exception as exc:self.notify_error(exc)
+    def create_batch(self):
+        if self.busy():return
+        try:
+            self.validate_plan();bid=self.store.create(self.plan_game,self.plan_assets,self.plan,self.plan_base,self.plan_settings,name=f'{len(self.plan)}条组合')
+            self.bid=bid;self.refresh_batches();set_combo(self.batch_combo,bid);self.load_batch();self.tabs.setCurrentIndex(3);self.save_session()
+        except Exception as exc:self.notify_error(exc)
+    def refresh_batches(self):
+        old=self.batch_combo.currentData();self.batch_combo.clear()
+        for bid,game,created,name,total,complete in self.store.batches():self.batch_combo.addItem(time.strftime('%m-%d %H:%M',time.localtime(created))+f' · {game} · {complete}/{total} · {bid[:8]}',bid)
+        if old:set_combo(self.batch_combo,old)
+        self.refresh_history()
+    @staticmethod
+    def status_name(s):return dict(pending='待处理',running='处理中/上次中断',complete='完成',failed='失败',cancelled='已放弃')[s]
+    def load_batch(self):
+        if self.busy():return
+        bid=self.batch_combo.currentData()
+        if not bid:return
+        self.bid=bid;batch=self.store.batch(bid);jobs=self.store.jobs(bid);self.jobs_table.setRowCount(len(jobs))
+        for row,j in enumerate(jobs):cells(self.jobs_table,row,[j['number'],batch['assets'][j['a']]['name'],batch['assets'][j['b']]['name'],self.status_name(j['status']),j['output'],j['error']])
+        counts=Counter(j['status'] for j in jobs);self.queue_status.setText(f'任务 {bid[:8]} · 完成{counts["complete"]}/{len(jobs)} · 失败{counts["failed"]} · 待处理{counts["pending"]+counts["running"]}')
+        self.total_progress.setMaximum(max(1,len(jobs)));self.total_progress.setValue(counts['complete']);self.current_progress.setValue(0)
+    def start_batch(self,retry=False):
+        if self.busy():return
+        if not self.bid:self.notify_error('请创建或载入一个导出任务。');return
+        bid=self.bid
+        def done(r):
+            self.load_batch();self.refresh_batches()
+            if 'value' in r:
+                value=r['value'];self.log.appendPlainText(('已暂停' if value['paused'] else '本轮结束')+f' · {value["seconds"]}秒 · {value["counts"]}')
+        self.start_work(lambda stop,notify:run_batch(bid,stop,notify,retry=retry),done)
+    def pause(self):
+        if self.busy():self.worker.stop.set();self.footer.setText('正在暂停：终止当前处理，已完成文件保留，当前条回到待处理。')
+    def play_job(self,row,col):
+        p=self.jobs_table.item(row,4).text()
+        if p and Path(p).exists():Player(p,self).exec()
+    def open_output(self):
+        p=Path(self.output.text())
+        if self.bid:p=Path(self.store.batch(self.bid)['settings']['output'])/('任务_'+self.bid[:8])
+        p.mkdir(parents=True,exist_ok=True);QDesktopServices.openUrl(QUrl.fromLocalFile(str(p.resolve())))
+    def relocate(self):
+        if self.busy() or not self.bid:return
+        batch=self.store.batch(self.bid);options=list(batch['assets']);labels=[batch['assets'][k]['name']+' · '+batch['assets'][k]['path'] for k in options]
+        text,ok=QInputDialog.getItem(self,'重定位任务素材','只允许选择内容相同的原文件',labels,0,False)
+        if not ok:return
+        p,_=QFileDialog.getOpenFileName(self,'定位原文件')
+        if p:
+            try:self.store.relocate(self.bid,options[labels.index(text)],p);self.footer.setText('原文件路径已更新，可重试失败条目。')
+            except Exception as exc:self.notify_error(exc)
+    def abandon(self):
+        if self.busy() or not self.bid:return
+        if QMessageBox.question(self,'放弃未完成任务','完成文件与历史保留，未完成配对释放。放弃后此任务不能继续。')==QMessageBox.StandardButton.Yes:
+            self.store.abandon(self.bid);self.load_batch();self.refresh_batches()
+    def refresh_history(self):
+        rows=self.store.history();self.history_summary.setText(f'本机成功配对 {len(rows)} 条 · 数据目录：{data_dir()}');self.history_table.setRowCount(len(rows))
+        for n,(game,a,b,completed,output) in enumerate(rows):cells(self.history_table,n,[game,a[:12],b[:12],time.strftime('%Y-%m-%d %H:%M',time.localtime(completed)),output])
+    def backup(self):
+        if self.busy():return
+        p,_=QFileDialog.getSaveFileName(self,'备份任务与历史','混剪历史.sqlite3','数据库 (*.sqlite3)')
+        if p:
+            try:self.store.backup(p);self.footer.setText('备份已保存：'+p)
+            except Exception as exc:self.notify_error(exc)
+    def restore(self):
+        if self.busy():return
+        p,_=QFileDialog.getOpenFileName(self,'恢复任务与历史','','数据库 (*.sqlite3)')
+        if p and QMessageBox.question(self,'恢复备份','恢复会替换本机任务和历史；当前数据库会先自动备份。继续吗？')==QMessageBox.StandardButton.Yes:
+            try:self.store.restore(p);self.bid=None;self.jobs_table.setRowCount(0);self.refresh_batches();self.footer.setText('已恢复备份。')
+            except Exception as exc:self.notify_error(exc)
+    @staticmethod
+    def table_csv(widget,path):
+        import csv
+        with open(path,'w',encoding='utf-8-sig',newline='') as f:
+            w=csv.writer(f);w.writerow([widget.horizontalHeaderItem(c).text() for c in range(widget.columnCount())])
+            for r in range(widget.rowCount()):w.writerow([widget.item(r,c).text() if widget.item(r,c) else '' for c in range(widget.columnCount())])
+    def export_history(self):
+        p,_=QFileDialog.getSaveFileName(self,'导出历史','配对历史.csv','CSV (*.csv)')
+        if p:self.table_csv(self.history_table,p)
+    def clear_cache(self):
+        if self.busy():self.notify_error('请先暂停当前处理。');return
+        if QMessageBox.question(self,'清理媒体缓存','删除处理片段、自动识别缓存和预览。历史、任务、手动校正字幕及源视频保留。下次会重新处理。继续吗？')==QMessageBox.StandardButton.Yes:
+            for name in ['cache','previews','frame_previews']:shutil.rmtree(data_dir()/name,ignore_errors=True)
+            self.last_preview='';self.footer.setText('缓存已清理。')
+    def help(self):
+        d=QDialog(self);d.setWindowTitle('快速使用');d.resize(680,560);l=QVBoxLayout(d);text=QPlainTextEdit();text.setReadOnly(True)
+        text.setPlainText('① 导入前贴、主视频和音乐，填写游戏名称。相同内容自动去重。\n\n② 选择声音和字幕。默认保留原声；加新音乐会和原声音混合。想换掉旧音乐，选择“尝试去旧音乐”，先试听效果。主视频默认保留原声音。前贴可单独指定音乐、次数和校正字幕。\n\n③ 输入“生成1000条，均匀分配，前贴01用200次”，或直接填数量、规则。点击生成计划，再预览。20×500最多10000个配对；历史及未完成任务会占用配对。\n\n④ 固定计划创建任务，再点开始。计划和设置会保存在本机。暂停立即中断当前条，完成文件保留；重启可载入任务继续，失败可重试。素材移动后用“重定位”找回原文件。放弃释放未完成配对。\n\n⑤ 整个软件文件夹可复制给同事，不需要装Python。每台电脑历史独立。升级前备份data文件夹或数据库。源视频不包含在历史备份里。\n\n硬切最快，通常更能完整保留连接处口播。淡入淡出等转场会重叠并缩短成片。字幕与音乐分离的质量请在真实素材上检查。后台模式降低进程优先级并顺序导出，仍可能占用显卡和硬盘。\n\n在线AI接口是可选项；不配置也能使用。它只解析规则文字，不理解视频内容。密钥仅当前会话有效。')
+        l.addWidget(text);l.addWidget(button('知道了',d.accept,True));d.exec()
+    def dragEnterEvent(self,event):
+        if event.mimeData().hasUrls():event.acceptProposedAction()
+    def dropEvent(self,event):
+        if self.busy():return
+        role,ok=QInputDialog.getItem(self,'导入拖入的素材','添加到哪个列表？',['A 前贴','B 主视频','音乐库'],0,False)
+        if ok:self.import_paths({'A 前贴':'a','B 主视频':'b','音乐库':'music'}[role],[u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()])
+    def closeEvent(self,event):
+        if self.busy():
+            self.worker.completed.disconnect()
+            self.worker.event.disconnect()
+            self.worker.stop.set();self.footer.setText('正在停止处理并保存任务…');self.worker.wait()
+        self.save_session();self.store.close();event.accept()
+
+
+def launch(argv):
+    app=QApplication(argv);app.setStyle('Fusion');app.setStyleSheet(STYLE)
+    lock=QLockFile(str(data_dir()/'app.lock'));lock.setStaleLockTime(0)
+    if not lock.tryLock(0):
+        QMessageBox.information(None,'混剪工坊','软件已经运行，请回到已打开的窗口。');return 0
+    window=MainWindow();window.show()
+    if '--screenshot' in argv:
+        i=argv.index('--screenshot');target=Path(argv[i+1]);target.parent.mkdir(parents=True,exist_ok=True)
+        QTimer.singleShot(1000,lambda:window.grab().save(str(target)))
+        QTimer.singleShot(1800,window.close)
+    result=app.exec();lock.unlock();return result
