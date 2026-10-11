@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+assets/bin/
+assets/models/
+assets/fonts/
+assets/licenses/
+data/
+build/
+dist/
+release/
+test_results/
+*.log
