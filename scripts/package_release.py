@@ -12,11 +12,12 @@ root=Path(__file__).resolve().parent.parent
 release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
-parser.add_argument('--version',default='1.0.3')
-parser.add_argument('--verification',default='test_results/portable_v103')
-parser.add_argument('--upgrade-verification',default='test_results/upgrade_v103')
-parser.add_argument('--isolation-verification',default='test_results/screenshot_v103')
-parser.add_argument('--cloud-verification',default='test_results/cloud_v103_portable')
+parser.add_argument('--version',default='1.0.4')
+parser.add_argument('--verification',default='test_results/portable_v104')
+parser.add_argument('--upgrade-verification',default='test_results/upgrade_v104')
+parser.add_argument('--isolation-verification',default='test_results/screenshot_v104')
+parser.add_argument('--cloud-verification',default='test_results/cloud_v104_portable')
+parser.add_argument('--player-verification',default='test_results/player_v104_portable')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -26,6 +27,7 @@ verification=root/args.verification
 upgrade_verification=root/args.upgrade_verification
 isolation_verification=root/args.isolation_verification
 cloud_verification=root/args.cloud_verification
+player_verification=root/args.player_verification
 
 if args.mode=='prepare':
     app=package/'MontageStudio'
@@ -52,6 +54,10 @@ elif args.mode=='zip':
         upgrade_verification/'升级与图标验证.json':'升级与图标验证.json',
         isolation_verification/'截图隔离验证.json':'截图隔离验证.json',
         cloud_verification/'云端库验证.json':'云端库验证.json',
+        player_verification/'播放器验证.json':'播放器验证.json',
+        player_verification/'浅色进度条.png':'播放器浅色进度条.png',
+        player_verification/'深色进度条.png':'播放器深色进度条.png',
+        player_verification/'实际解码帧.png':'播放器实际解码帧.png',
         root/'docs/DELIVERY.md':'交付说明.md',
         verification/'delivery/gui/播放器实际视频帧.png':'实际解码帧.png',
         verification/'delivery/gui/导出完成.png':'便携导出完成.png'}
@@ -71,6 +77,9 @@ elif args.mode=='zip':
     cloud=json.loads((cloud_verification/'云端库验证.json').read_text(encoding='utf-8'))
     if not cloud.get('passed') or len(cloud.get('checks',[]))!=5 or any(not c.get('passed') for c in cloud['checks']) or cloud.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('Cloud validation does not match the release executable.')
+    player=json.loads((player_verification/'播放器验证.json').read_text(encoding='utf-8'))
+    if not player.get('passed') or len(player.get('checks',[]))!=5 or any(not c.get('passed') for c in player['checks']) or player.get('exe_sha256')!=portable.get('exe_sha256'):
+        raise SystemExit('Player validation does not match the release executable.')
     if (package/'MontageStudio/data').exists():
         raise SystemExit('Distribution contains user data; do not include it in the release.')
     for src,dst in items.items():shutil.copy2(src,evidence/dst)

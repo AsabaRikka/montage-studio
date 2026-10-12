@@ -9,13 +9,13 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QLockFile, QSize, QItemSelectionModel
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QLockFile, QSize, QItemSelectionModel, QRectF
 from PySide6.QtGui import QDesktopServices, QFont, QColor, QIcon, QPixmap, QPainter
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QPushButton,QTabWidget,QListWidget,QListWidgetItem,QFileDialog,QMessageBox,QLineEdit,
     QComboBox,QSpinBox,QDoubleSpinBox,QCheckBox,QFormLayout,QGroupBox,QSplitter,
     QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QDialog,QDialogButtonBox,
-    QProgressBar,QScrollArea,QAbstractItemView,QInputDialog,QColorDialog)
+    QProgressBar,QScrollArea,QAbstractItemView,QInputDialog,QColorDialog,QSlider,QStyle)
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from .runtime import data_dir,write_json
@@ -82,22 +82,86 @@ class Worker(QThread):
         except Exception as exc:self.completed.emit(dict(error=str(exc)[-2500:]))
 
 
+class SeekSlider(QSlider):
+    """Track clicks and drags seek directly; wheel gestures never skip video."""
+    def __init__(self,parent=None):
+        super().__init__(Qt.Orientation.Horizontal,parent)
+        self.setAccessibleName('视频播放进度');self.setMinimumHeight(28)
+    def at(self,event):
+        return QStyle.sliderValueFromPosition(self.minimum(),self.maximum(),
+            round(event.position().x()-7),max(1,self.width()-14))
+    def paintEvent(self,event):
+        t=tokens(self.palette().window().color().lightness()<128)
+        painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen);painter.setBrush(QColor(t['line']))
+        y=self.height()/2;span=max(1,self.width()-14)
+        x=7+QStyle.sliderPositionFromValue(self.minimum(),self.maximum(),self.sliderPosition(),span)
+        painter.drawRoundedRect(QRectF(7,y-2,span,4),2,2)
+        painter.setBrush(QColor(t['accent'] if self.isEnabled() else t['line']))
+        painter.drawRoundedRect(QRectF(7,y-2,max(0,x-7),4),2,2)
+        painter.drawEllipse(QRectF(x-7,y-7,14,14))
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush);painter.setPen(QColor(t['muted']))
+            painter.drawEllipse(QRectF(x-10,y-10,20,20))
+        painter.end()
+    def mousePressEvent(self,event):
+        if event.button()==Qt.MouseButton.LeftButton and self.isEnabled():
+            self.setSliderDown(True);self.setSliderPosition(self.at(event));event.accept()
+        else:super().mousePressEvent(event)
+    def mouseMoveEvent(self,event):
+        if self.isSliderDown():self.setSliderPosition(self.at(event));event.accept()
+        else:super().mouseMoveEvent(event)
+    def mouseReleaseEvent(self,event):
+        if event.button()==Qt.MouseButton.LeftButton and self.isSliderDown():
+            self.setSliderPosition(self.at(event));self.setSliderDown(False);event.accept()
+        else:super().mouseReleaseEvent(event)
+    def wheelEvent(self,event):event.ignore()
+
+
 class Player(QDialog):
     def __init__(self,path,parent=None):
         super().__init__(parent);self.setWindowTitle('成片预览 · '+Path(path).name);self.resize(580,760)
         layout=QVBoxLayout(self);self.video=QVideoWidget();layout.addWidget(self.video,1)
         self.player=QMediaPlayer(self);self.audio=QAudioOutput(self);self.audio.setVolume(.8)
         self.player.setAudioOutput(self.audio);self.player.setVideoOutput(self.video)
-        self.position=spin(0,100000,0,2);self.position.setSuffix(' 秒')
-        row=QHBoxLayout();row.addWidget(button('播放 / 暂停',self.toggle));row.addWidget(self.position)
-        row.addWidget(button('跳转',lambda:self.player.setPosition(round(self.position.value()*1000))))
-        layout.addLayout(row);self.state=QLabel();layout.addWidget(self.state)
-        self.player.positionChanged.connect(lambda t:self.position.setValue(t/1000))
-        self.player.durationChanged.connect(lambda t:self.position.setMaximum(t/1000))
-        self.player.errorOccurred.connect(lambda e,t:self.state.setText(t))
+        self.resume_after_seek=False
+        self.timeline=SeekSlider(self);self.timeline.setRange(0,0);self.timeline.setEnabled(False)
+        layout.addWidget(self.timeline)
+        row=QHBoxLayout();self.play_button=button('暂停',self.toggle);row.addWidget(self.play_button)
+        row.addStretch();self.time_label=QLabel('00:00 / 00:00');row.addWidget(self.time_label)
+        layout.addLayout(row);self.state=QLabel();self.state.hide();layout.addWidget(self.state)
+        self.timeline.sliderPressed.connect(self.begin_seek);self.timeline.sliderReleased.connect(self.end_seek)
+        self.timeline.valueChanged.connect(self.seek_changed)
+        self.player.positionChanged.connect(self.update_position)
+        self.player.durationChanged.connect(self.update_duration)
+        self.player.seekableChanged.connect(lambda ready:self.timeline.setEnabled(ready and self.player.duration()>0))
+        self.player.playbackStateChanged.connect(lambda state:self.play_button.setText('暂停' if state==QMediaPlayer.PlaybackState.PlayingState else '播放'))
+        self.player.errorOccurred.connect(lambda e,t:(self.state.setText(t),self.state.show()))
         self.player.setSource(QUrl.fromLocalFile(str(Path(path).resolve())));self.player.play()
     def toggle(self):
+        if not self.player.isPlaying() and self.player.mediaStatus()==QMediaPlayer.MediaStatus.EndOfMedia:self.player.setPosition(0)
         self.player.pause() if self.player.isPlaying() else self.player.play()
+    @staticmethod
+    def clock(milliseconds):
+        seconds=max(0,milliseconds)//1000;hours,seconds=divmod(seconds,3600);minutes,seconds=divmod(seconds,60)
+        return f'{hours:02}:{minutes:02}:{seconds:02}' if hours else f'{minutes:02}:{seconds:02}'
+    def show_time(self,position):
+        self.time_label.setText(self.clock(position)+' / '+self.clock(self.player.duration()))
+    def update_duration(self,duration):
+        self.timeline.setRange(0,duration);self.timeline.setSingleStep(1000);self.timeline.setPageStep(5000)
+        self.timeline.setEnabled(duration>0 and self.player.isSeekable());self.show_time(self.player.position())
+    def update_position(self,position):
+        if self.timeline.isSliderDown():return
+        self.timeline.blockSignals(True);self.timeline.setValue(position);self.timeline.blockSignals(False);self.show_time(position)
+    def begin_seek(self):
+        self.resume_after_seek=self.player.isPlaying();self.player.pause()
+    def seek_changed(self,position):
+        self.show_time(position)
+        if not self.timeline.isSliderDown():self.player.setPosition(position)
+    def end_seek(self):
+        self.player.setPosition(self.timeline.value())
+        if self.resume_after_seek:self.player.play()
+        self.resume_after_seek=False
     def done(self,result):
         self.player.stop();super().done(result)
 
