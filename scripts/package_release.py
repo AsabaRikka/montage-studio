@@ -12,9 +12,11 @@ root=Path(__file__).resolve().parent.parent
 release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
-parser.add_argument('--version',default='1.0.2')
-parser.add_argument('--verification',default='test_results/portable_v102_final')
-parser.add_argument('--upgrade-verification',default='test_results/upgrade_v102_final')
+parser.add_argument('--version',default='1.0.3')
+parser.add_argument('--verification',default='test_results/portable_v103')
+parser.add_argument('--upgrade-verification',default='test_results/upgrade_v103')
+parser.add_argument('--isolation-verification',default='test_results/screenshot_v103')
+parser.add_argument('--cloud-verification',default='test_results/cloud_v103_portable')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -22,6 +24,8 @@ if args.version != __version__:raise SystemExit('Release version must match sour
 package=release/('混剪工坊_'+args.version)
 verification=root/args.verification
 upgrade_verification=root/args.upgrade_verification
+isolation_verification=root/args.isolation_verification
+cloud_verification=root/args.cloud_verification
 
 if args.mode=='prepare':
     app=package/'MontageStudio'
@@ -46,7 +50,8 @@ elif args.mode=='zip':
         verification/'delivery/扩展报告.json':'便携扩展验证.json',
         verification/'ui/界面改进验证.json':'界面改进验证.json',
         upgrade_verification/'升级与图标验证.json':'升级与图标验证.json',
-        root/'test_results/screenshot_v102_final/截图隔离验证.json':'截图隔离验证.json',
+        isolation_verification/'截图隔离验证.json':'截图隔离验证.json',
+        cloud_verification/'云端库验证.json':'云端库验证.json',
         root/'docs/DELIVERY.md':'交付说明.md',
         verification/'delivery/gui/播放器实际视频帧.png':'实际解码帧.png',
         verification/'delivery/gui/导出完成.png':'便携导出完成.png'}
@@ -60,9 +65,12 @@ elif args.mode=='zip':
     upgrade=json.loads((upgrade_verification/'升级与图标验证.json').read_text(encoding='utf-8'))
     if not upgrade.get('passed') or upgrade.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('Upgrade/icon validation does not match the release executable.')
-    isolation=json.loads((root/'test_results/screenshot_v102_final/截图隔离验证.json').read_text(encoding='utf-8'))
+    isolation=json.loads((isolation_verification/'截图隔离验证.json').read_text(encoding='utf-8'))
     if not isolation.get('passed') or isolation.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('Screenshot isolation validation does not match the release executable.')
+    cloud=json.loads((cloud_verification/'云端库验证.json').read_text(encoding='utf-8'))
+    if not cloud.get('passed') or cloud.get('exe_sha256')!=portable.get('exe_sha256'):
+        raise SystemExit('Cloud validation does not match the release executable.')
     if (package/'MontageStudio/data').exists():
         raise SystemExit('Distribution contains user data; do not include it in the release.')
     for src,dst in items.items():shutil.copy2(src,evidence/dst)

@@ -11,7 +11,7 @@ import sys
 root=Path(__file__).resolve().parent.parent
 exe=Path(sys.argv[1]).resolve()
 folder=Path(sys.argv[2]).resolve()
-source=root/'test_results/portable_v101/delivery-test_data'
+source=Path(sys.argv[3]).resolve() if len(sys.argv)>3 else root/'test_results/portable_v101/delivery-test_data'
 target=folder/'migrated_synthetic_data'
 if target.exists():
     raise SystemExit('Use a new validation destination, preserving earlier evidence.')
@@ -48,7 +48,7 @@ pe=pefile.PE(str(exe))
 resource_types=[e.id for e in pe.DIRECTORY_ENTRY_RESOURCE.entries]
 assert 3 in resource_types and 14 in resource_types,'Missing EXE icon or group icon'
 pe.close()
-report=dict(passed=True,source='1.0.1 synthetic delivery-test data only',copy_only=True,
+report=dict(passed=True,source=str(source.relative_to(root)),copy_only=True,
     exe_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),
     session_fields_preserved=list(before_session),theme_default='light',database_records_preserved=True,
     database_rows={db:{table:len(rows) for table,rows in tables.items()} for db,tables in before_db.items()},

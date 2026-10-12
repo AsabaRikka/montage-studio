@@ -1,5 +1,7 @@
 # 第三方组件与资源来源
 
+1.0.3云端库内置官方larksuite/cli Windows x64独立二进制1.0.96（MIT，https://github.com/larksuite/cli），来源于本机官方@larksuite/cli安装包。49,420,800字节；哈希见ASSETS_MANIFEST.json，许可原文assets/licenses/lark-cli-MIT.txt随包。只复制bin/lark-cli.exe及许可，没有复制本机CLI配置、App Secret、账号令牌或公司视频；运行时按本机用户身份连接。源码重建需准备相同版本二进制到assets/bin/lark-cli.exe，不能仅有源码而遗漏此组件。
+
 1.0.2界面导航图标来自Tabler Icons v3.35.0（MIT），保存于assets/ui/tabler，许可原文LICENSE.txt随包；派生的勾选/上下箭头仅改色。来源https://github.com/tabler/tabler-icons/tree/v3.35.0 。软件Logo与MontageStudio.ico是本项目原创拼接/播放标记，可由scripts/make_brand.py重建，没有使用Codex/OpenAI品牌标志。界面仅参考中性桌面风格，不声称使用Codex官方设计系统。
 
 混剪工坊源码按GPL-3.0发布（LICENSE），包含完整源码交付。FFmpeg 8.1.1 gyan.dev静态构建为GPL3，源版本239f2c733d，构建说明及许可随包。Qt/PySide6为动态库，LGPL3/GPL3许可原文随包，不嵌入静态Qt。软件没有限制替换兼容组件。

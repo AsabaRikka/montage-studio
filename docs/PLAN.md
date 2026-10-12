@@ -1,5 +1,7 @@
 # 技术方案与工作方式
 
+1.0.3：cloud.py封装内置官方lark-cli 1.0.96独立Windows程序，无需Node安装；用户身份只读解析链接、按视图投影目录/分页、专用附件下载。CLI负责本机凭据，不读取或复制密钥到软件会话/发布包。cloud_ui.py提供原生云端库、后台同步/取消、搜索和连接检查/授权链接+二维码。新电脑允许用户填写公司应用至独立montage-studio连接，登录自身有表格及下载权限的用户。下载临时文件先大小/媒体检查，再原子入缓存；缓存含SHA256素材身份，重用时核对，云端键含Base/表/记录/附件。云端目录和视频保存在data/cloud，移出A不删缓存；手动刷新不处理未选视频。停止或单条失败保留已完成下载，重试复用。诊断--cloud-test默认隔离且仅供明确云端验证，常规便携验证离线不访问公司表。
+
 1.0.2：theme.py集中Qt浅深色与Tabler MIT图标；gallery.py用QListWidget IconMode及委托绘制自适应网格，不创建500套复杂子控件。原生CheckState与selection同步，普通点击累加、Shift区间、空格切换；保留既有selectedItems业务接口。assets/ui保存原创PNG/多尺寸ICO与图标许可，spec设置EXE图标。新缩略图-v2缓存提高分辨率；高DPI按目标矩形绘制。main.py媒体/UI/扩展/压力/截图诊断默认MONTAGE_DATA_DIR隔离，显式环境变量优先。升级只用合成测试数据副本，ZIP核对便携、升级/图标、截图隔离报告的EXE哈希；事件及边界见HANDOFF。
 
 1.0.1 增量：thumbnails.py 使用单个后台队列低优先级调用内置 FFmpeg 取帧，按素材内容身份缓存 JPG；widgets.py 统一防止下拉/数字控件滚轮改值并把滚轮传递给外层滚动页面。uitest.py 提供真实 Qt 交互回归，冻结 EXE 同样运行；发布脚本按版本独立目录发布，拒绝覆盖含用户 data 的目录。

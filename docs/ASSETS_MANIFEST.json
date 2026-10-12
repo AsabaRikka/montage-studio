@@ -743,5 +743,15 @@
     "path": "ui/tabler/video.svg",
     "size": 506,
     "sha256": "ac8190db43d2dcaebbcece6b96e62f0c39eba3a6979f20a51170ebf623bc1dc6"
+  },
+  {
+    "path": "bin/lark-cli.exe",
+    "size": 49420800,
+    "sha256": "f71aeff4a094fe3b401dcfc23d28bb9c1d7fe4923d144d15e01d1e917ba37ea1"
+  },
+  {
+    "path": "licenses/lark-cli-MIT.txt",
+    "size": 1084,
+    "sha256": "c969fc7e3af68e6bf40b0d8dd9c3dcc377eb685a2139535b203b39fdcad739ee"
   }
 ]

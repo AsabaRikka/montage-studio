@@ -246,6 +246,7 @@ class MainWindow(QMainWindow):
         for b,glyph in self.icon_buttons:b.setIcon(ui_icon(glyph,t['on_accent'] if b.property('primary') else t['ink']))
         self.theme_button.setText('切换浅色' if self.dark else '切换深色');self.theme_button.setIcon(ui_icon('sun' if self.dark else 'moon',t['ink']))
         for w in self.lists.values():w.dark=self.dark;w.viewport().update()
+        self.cloud_panel.grid.dark=self.dark;self.cloud_panel.grid.viewport().update()
         if save:self.save_session()
     def notify_error(self,exc):QMessageBox.warning(self,'请检查',str(exc)[-2500:])
     def busy(self):return self.worker is not None and self.worker.isRunning()
@@ -287,6 +288,8 @@ class MainWindow(QMainWindow):
             if role=='a':
                 br=QHBoxLayout();br.addWidget(button('设置选中前贴 / 指定使用次数',self.edit_intro));br.addWidget(button('编辑 / 识别字幕（单条）',self.edit_subtitles));br.addStretch();bl.addLayout(br)
             self.material_tabs.addTab(panel,title+' (0)')
+        from .cloud_ui import CloudPanel
+        self.cloud_panel=CloudPanel(self);self.material_tabs.addTab(self.cloud_panel,'云端前贴')
         row=QHBoxLayout();note=QLabel('直接勾选即可多选，双击播放。主视频默认保留原声。');note.setProperty('muted',True);row.addWidget(note);row.addStretch();row.addWidget(button('下一步：画面与声音',lambda:self.tabs.setCurrentIndex(1),True));l.addLayout(row)
         self.tabs.addTab(page,'① 素材')
     def settings_tab(self):
@@ -376,6 +379,8 @@ class MainWindow(QMainWindow):
                     if override.get('subtitle_rows') is not None:extra+=' · 已校正字幕'
                 detail=f'{a["duration"]:.1f}s' if role=='music' else f'{a["duration"]:.1f}s · {a["width"]}×{a["height"]}'
                 item=QListWidgetItem(prefix+a['name']);item.setToolTip(a['name']+'\n'+a['path']+extra);item.setData(Qt.ItemDataRole.UserRole,a['id']);item.setData(NAME,prefix+a['name']);item.setData(DETAIL,detail);item.setData(EXTRA,extra.lstrip(' ·'));item.setData(KIND,role)
+                if a.get('cloud'):
+                    item.setToolTip(item.toolTip()+'\n云端备注：'+(a['cloud'].get('note') or '无')+'\n来源：'+a['cloud'].get('source_url',''))
                 item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Unchecked);w.addItem(item)
                 if role!='music':
                     item.setIcon(self.thumbnail_icons.get(a['id'],self.thumbnail_placeholder))

@@ -36,6 +36,11 @@ def main():
             os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
             from montage.uitest import verify
             return verify(Path(sys.argv[2]))
+        if mode=='--cloud-test':
+            import os
+            os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
+            from montage.cloudtest import verify
+            return verify(Path(sys.argv[2]))
         if mode in ('--delivery-test','--stress-test'):
             import os
             os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
