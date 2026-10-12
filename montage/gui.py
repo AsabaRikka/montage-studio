@@ -162,6 +162,93 @@ class SoundControls(QGroupBox):
         self.music_volume.setValue(s.get(x+'_music_volume',.3));self.offset.setValue(s.get(x+'_music_start',0.))
 
 
+class IntroSoundDialog(QDialog):
+    """Audition unsaved intro settings without creating jobs or history."""
+    def __init__(self,assets,settings,overrides,musics,main_count,parent=None):
+        super().__init__(parent);self.assets=copy.deepcopy(assets);self.settings=copy.deepcopy(settings)
+        self.overrides=copy.deepcopy(overrides);self.musics=copy.deepcopy(musics);self.worker=None;self.preview_player=None;self.closing=False
+        multiple=len(assets)>1;a=assets[0]
+        self.setWindowTitle(f'批量设置 · {len(assets)} 条前贴' if multiple else '单独设置 · '+a['name']);self.resize(650,620)
+        l=QVBoxLayout(self)
+        self.apply_sound=QCheckBox('将下方声音设置应用到所有选中前贴');self.apply_sound.setChecked(True);self.apply_sound.setVisible(multiple);l.addWidget(self.apply_sound)
+        self.controls=SoundControls('选中前贴的声音设置','a',musics)
+        self.controls.load(dict(settings,**overrides.get(a['id'],{})));l.addWidget(self.controls)
+        self.apply_fixed=QCheckBox('修改每条选中前贴的指定次数（未勾选时保留原次数）');self.apply_fixed.setChecked(not multiple);self.apply_fixed.setVisible(multiple);l.addWidget(self.apply_fixed)
+        self.fixed=spin(-1,main_count,overrides.get(a['id'],{}).get('fixed',-1));self.fixed.setSpecialValueText('自动分配')
+        f=QFormLayout();f.addRow('指定使用次数（0=不用）',self.fixed);l.addLayout(f)
+        self.fixed.setEnabled(not multiple);self.apply_fixed.toggled.connect(self.fixed.setEnabled)
+        self.inherit=QCheckBox('移除选中前贴的声音覆盖，使用整批声音设置');l.addWidget(self.inherit)
+        self.apply_sound.toggled.connect(self.update_controls);self.inherit.toggled.connect(self.update_controls)
+        self.source=QComboBox()
+        for item in assets:self.source.addItem(item['name'],item['id'])
+        f=QFormLayout();f.addRow('试听前贴',self.source);l.addLayout(f)
+        note=QLabel('试听当前未保存的声音设置，仅播放所选前贴，不加字幕、不占用配对。随机模式试听一首示例，最终曲目以生成计划为准。');note.setWordWrap(True);l.addWidget(note)
+        row=QHBoxLayout();self.preview_button=button('试听当前设置',self.preview,True);self.preview_button.setAutoDefault(False);row.addWidget(self.preview_button)
+        self.cancel_preview=button('停止生成',self.stop_preview);self.cancel_preview.setEnabled(False);self.cancel_preview.setAutoDefault(False);row.addWidget(self.cancel_preview);l.addLayout(row)
+        self.status=QLabel('修改音量或音乐起点后，点击试听重新生成。');self.status.setWordWrap(True);l.addWidget(self.status)
+        self.bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+        self.bb.button(QDialogButtonBox.StandardButton.Save).setText('保存');self.bb.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
+        self.bb.accepted.connect(self.accept);self.bb.rejected.connect(self.reject);l.addWidget(self.bb)
+        self.last_result=None;self.last_settings=None
+    def update_controls(self):
+        self.controls.setEnabled(self.apply_sound.isChecked() and not self.inherit.isChecked())
+    def audition_settings(self):
+        a=self.assets[self.source.currentIndex()];s=copy.deepcopy(self.settings)
+        if not self.inherit.isChecked():
+            s.update(self.overrides.get(a['id'],{}))
+            if self.apply_sound.isChecked():s.update(self.controls.value())
+        mode=s.get('a_music_mode','none')
+        if mode=='none':s['a_music']=''
+        elif mode in ('random_a','random_job'):
+            if not self.musics:raise ValueError('随机音乐需要先添加音乐库。')
+            s['a_music']=random.Random(s['seed']).choice(self.musics)['path']
+        elif mode=='one' and not s.get('a_music'):raise ValueError('指定音乐模式需要选择一首音乐。')
+        if s['a_sound']=='external' and not s.get('a_voice'):raise ValueError('独立声音模式需要指定口播/音效文件。')
+        s['subtitles']=False
+        return a,s
+    def preview(self):
+        if self.worker is not None:return
+        try:a,s=self.audition_settings()
+        except Exception as exc:self.status.setText('无法试听：'+str(exc));return
+        self.last_settings=copy.deepcopy(s);self.last_result=None
+        music=Path(s['a_music']).name if s['a_music'] else '无新音乐'
+        self.status.setText('正在生成试听 · '+a['name']+' · '+music+'（可停止）')
+        self.preview_button.setEnabled(False);self.cancel_preview.setEnabled(True)
+        def work(stop,notify):
+            if identity(a['path'])!=a['id']:raise ValueError('前贴内容已改变，请重新导入。')
+            engine=MediaEngine(stop)
+            try:
+                path,duration=engine.prepare(a['path'],s,'a')
+                if stop.is_set():raise Cancelled()
+                return dict(path=str(path),duration=duration,name=a['name'],music=music)
+            finally:engine.close()
+        self.worker=Worker(work,self);self.worker.completed.connect(self.preview_done);self.worker.start()
+    def preview_done(self,result):
+        worker=self.worker
+        if worker is not None:
+            worker.wait()
+            if worker.stop.is_set():result=dict(cancelled=True)
+            worker.deleteLater()
+        self.worker=None
+        if self.closing:return
+        self.preview_button.setEnabled(True);self.cancel_preview.setEnabled(False);self.last_result=result
+        if 'value' in result:
+            value=result['value'];self.status.setText('试听已生成 · '+value['name']+' · '+value['music'])
+            self.preview_player=Player(value['path'],self)
+            self.preview_player.setWindowTitle('前贴声音试听 · '+value['name']+' · '+value['music'])
+            self.preview_player.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose);self.preview_player.setWindowModality(Qt.WindowModality.WindowModal);self.preview_player.show()
+        elif result.get('cancelled'):self.status.setText('已停止生成，可修改设置后重新试听。')
+        else:self.status.setText('试听失败：'+result.get('error','未知错误'))
+    def stop_preview(self):
+        if self.worker is not None:self.worker.stop.set();self.cancel_preview.setEnabled(False);self.status.setText('正在停止生成…')
+    def done(self,result):
+        self.closing=True
+        if self.worker is not None:self.worker.stop.set();self.worker.wait()
+        # A parent can close while the child player is still open.
+        for player in self.findChildren(Player):player.done(0)
+        super().done(result)
+
+
 class SubtitleDialog(QDialog):
     def __init__(self,source,settings,rows,parent):
         super().__init__(parent);self.source=source;self.settings=copy.deepcopy(settings);self.worker=None
@@ -495,19 +582,9 @@ class MainWindow(QMainWindow):
         if self.busy():return
         try:assets=self.selected_assets('a');a=assets[0]
         except Exception as exc:self.notify_error(exc);return
-        multiple=len(assets)>1
-        dialog=QDialog(self);dialog.setWindowTitle(f'批量设置 · {len(assets)} 条前贴' if multiple else '单独设置 · '+a['name']);l=QVBoxLayout(dialog)
-        apply_sound=QCheckBox('将下方声音设置应用到所有选中前贴');apply_sound.setChecked(True);apply_sound.setVisible(multiple);l.addWidget(apply_sound)
-        controls=SoundControls('选中前贴的声音设置','a',self.assets['music']);controls.load(dict(self.settings(),**self.overrides.get(a['id'],{})));l.addWidget(controls)
-        apply_sound.toggled.connect(controls.setEnabled)
-        apply_fixed=QCheckBox('修改每条选中前贴的指定次数（未勾选时保留原次数）');apply_fixed.setChecked(not multiple);apply_fixed.setVisible(multiple);l.addWidget(apply_fixed)
-        fixed=spin(-1,len(self.assets['b']),self.overrides.get(a['id'],{}).get('fixed',-1));fixed.setSpecialValueText('自动分配');f=QFormLayout();f.addRow('指定使用次数（0=不用）',fixed);l.addLayout(f)
-        fixed.setEnabled(not multiple);apply_fixed.toggled.connect(fixed.setEnabled)
-        inherit=QCheckBox('移除选中前贴的声音覆盖，使用整批声音设置');l.addWidget(inherit)
-        note=QLabel('指定音乐模式会覆盖整批音乐。随机按前贴 / 每条成片模式仍按固定随机种子分配。');note.setWordWrap(True);l.addWidget(note)
-        bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);bb.accepted.connect(dialog.accept);bb.rejected.connect(dialog.reject);l.addWidget(bb)
+        dialog=IntroSoundDialog(assets,self.settings(),self.overrides,self.assets['music'],len(self.assets['b']),self)
         if dialog.exec():
-            self.apply_intro_overrides(assets,controls.value() if apply_sound.isChecked() else None,fixed.value() if apply_fixed.isChecked() else None,inherit.isChecked())
+            self.apply_intro_overrides(assets,dialog.controls.value() if dialog.apply_sound.isChecked() else None,dialog.fixed.value() if dialog.apply_fixed.isChecked() else None,dialog.inherit.isChecked())
             self.refresh_assets();self.save_session()
     def apply_intro_overrides(self,assets,sound=None,fixed=None,inherit=False):
         for a in assets:
