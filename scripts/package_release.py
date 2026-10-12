@@ -69,7 +69,7 @@ elif args.mode=='zip':
     if not isolation.get('passed') or isolation.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('Screenshot isolation validation does not match the release executable.')
     cloud=json.loads((cloud_verification/'云端库验证.json').read_text(encoding='utf-8'))
-    if not cloud.get('passed') or cloud.get('exe_sha256')!=portable.get('exe_sha256'):
+    if not cloud.get('passed') or len(cloud.get('checks',[]))!=5 or any(not c.get('passed') for c in cloud['checks']) or cloud.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('Cloud validation does not match the release executable.')
     if (package/'MontageStudio/data').exists():
         raise SystemExit('Distribution contains user data; do not include it in the release.')
