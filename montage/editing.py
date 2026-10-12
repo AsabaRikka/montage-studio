@@ -13,6 +13,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from .core import Runner, Cancelled, preview_frame
 from .runtime import data_dir
+from .widgets import NoWheelDoubleSpinBox as QDoubleSpinBox
 
 
 class FrameWorker(QThread):

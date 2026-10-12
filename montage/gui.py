@@ -9,8 +9,8 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QLockFile
-from PySide6.QtGui import QDesktopServices, QFont, QColor
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QLockFile, QSize, QItemSelectionModel
+from PySide6.QtGui import QDesktopServices, QFont, QColor, QIcon, QPixmap, QPainter
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QPushButton,QTabWidget,QListWidget,QListWidgetItem,QFileDialog,QMessageBox,QLineEdit,
     QComboBox,QSpinBox,QDoubleSpinBox,QCheckBox,QFormLayout,QGroupBox,QSplitter,
@@ -26,6 +26,8 @@ from .media import MediaEngine
 from .core import Cancelled
 from .subtitles import read_srt,write_srt,align_script
 from .editing import FramePreview
+from .widgets import NoWheelComboBox as QComboBox, NoWheelSpinBox as QSpinBox, NoWheelDoubleSpinBox as QDoubleSpinBox
+from .thumbnails import ThumbnailLoader
 
 
 STYLE='''
@@ -220,8 +222,13 @@ class SubtitleDialog(QDialog):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio 1.0');self.resize(1220,880);self.setMinimumSize(990,720)
+        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio 1.0.1');self.resize(1220,880);self.setMinimumSize(990,720)
         self.store=Store();self.assets={'a':[],'b':[],'music':[]};self.overrides={};self.plan=[];self.plan_settings=[];self.plan_assets={};self.bid=None;self.worker=None;self.last_preview='';self.api_key='';self.api_config={}
+        self.thumbnail_loader=ThumbnailLoader(self);self.thumbnail_loader.ready.connect(self.thumbnail_ready)
+        self.thumbnail_icons={};self.thumbnail_loader.start()
+        placeholder=QPixmap(88,104);placeholder.fill(QColor('#e8eef5'))
+        painter=QPainter(placeholder);painter.setPen(QColor('#66758a'));painter.drawText(placeholder.rect(),Qt.AlignmentFlag.AlignCenter,'预览加载中');painter.end()
+        self.thumbnail_placeholder=QIcon(placeholder)
         self.setAcceptDrops(True)
         root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root);layout.setContentsMargins(22,16,22,14)
         header=QHBoxLayout();brand=QLabel('混剪工坊');brand.setStyleSheet('font-size:25px;font-weight:700;color:#15354f;');header.addWidget(brand)
@@ -254,15 +261,20 @@ class MainWindow(QMainWindow):
     def material_tab(self):
         page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
         row=QHBoxLayout();row.addWidget(QLabel('游戏 / 历史分组'));self.game=QLineEdit('默认游戏');row.addWidget(self.game);self.recursive=QCheckBox('导入文件夹包含子文件夹');self.recursive.setChecked(True);row.addWidget(self.recursive);l.addLayout(row)
-        note=QLabel('同一列表按文件内容去重；可拖入素材。前贴单独设置可覆盖整批设置，主视频默认保留原声。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
+        note=QLabel('点击缩略图选择素材；Ctrl 多选、Shift 连选，也可全选后批量移除 / 设置前贴。双击播放；主视频默认保留原声。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
         row=QHBoxLayout();self.lists={};self.counts={}
         for role,title in [('a','A · AI前贴'),('b','B · 游戏主视频'),('music','音乐库')]:
             box=QGroupBox(title);bl=QVBoxLayout(box);self.counts[role]=QLabel('0条素材');bl.addWidget(self.counts[role])
             w=QListWidget();w.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection);self.lists[role]=w;bl.addWidget(w,1)
+            w.setTextElideMode(Qt.TextElideMode.ElideRight);w.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            if role!='music':w.setIconSize(QSize(88,104));w.setSpacing(3)
+            w.itemSelectionChanged.connect(lambda r=role:self.update_selection_count(r))
+            w.itemDoubleClicked.connect(lambda item,r=role:self.play_source(r))
+            br=QHBoxLayout();br.addWidget(button('全选',w.selectAll));br.addWidget(button('取消选择',w.clearSelection));bl.addLayout(br)
             br=QHBoxLayout();br.addWidget(button('添加文件',lambda checked=False,r=role:self.import_files(r)));br.addWidget(button('添加文件夹',lambda checked=False,r=role:self.import_folder(r)));bl.addLayout(br)
             br=QHBoxLayout();br.addWidget(button('移除选中',lambda checked=False,r=role:self.remove_assets(r)));br.addWidget(button('播放原片',lambda checked=False,r=role:self.play_source(r)));bl.addLayout(br)
             if role=='a':
-                bl.addWidget(button('单独设置 / 指定使用次数',self.edit_intro));bl.addWidget(button('编辑 / 识别字幕',self.edit_subtitles,True))
+                bl.addWidget(button('设置选中前贴 / 指定使用次数',self.edit_intro));bl.addWidget(button('编辑 / 识别字幕（单条）',self.edit_subtitles,True))
             row.addWidget(box,1)
         l.addLayout(row,1);l.addWidget(button('下一步：设置画面与声音',lambda:self.tabs.setCurrentIndex(1),True));self.tabs.addTab(page,'① 素材')
     def settings_tab(self):
@@ -334,6 +346,9 @@ class MainWindow(QMainWindow):
         except (OSError,ValueError,KeyError):pass
     def refresh_assets(self):
         for role,w in self.lists.items():
+            selected={i.data(Qt.ItemDataRole.UserRole) for i in w.selectedItems()}
+            current=w.currentItem().data(Qt.ItemDataRole.UserRole) if w.currentItem() else None
+            w.blockSignals(True)
             w.clear()
             for n,a in enumerate(self.assets[role],1):
                 prefix=f'{n:02}  ' if role=='a' else ''
@@ -344,8 +359,35 @@ class MainWindow(QMainWindow):
                     if override.get('fixed',-1)>=0:extra+=f' · {override["fixed"]}次'
                     if override.get('subtitle_rows') is not None:extra+=' · 已校正字幕'
                 item=QListWidgetItem(f'{prefix}{a["name"]}\n{a["duration"]:.1f}s · {a["width"]}×{a["height"]}{extra}');item.setToolTip(a['path']);item.setData(Qt.ItemDataRole.UserRole,a['id']);w.addItem(item)
-            self.counts[role].setText(f'{len(self.assets[role])} 条素材')
+                if role!='music':
+                    item.setSizeHint(QSize(0,112));item.setIcon(self.thumbnail_icons.get(a['id'],self.thumbnail_placeholder))
+                    cached=self.thumbnail_loader.path(a['id'])
+                    if a['id'] not in self.thumbnail_icons:
+                        pixmap=QPixmap(str(cached)) if cached.exists() else QPixmap()
+                        if not pixmap.isNull():
+                            self.thumbnail_icons[a['id']]=QIcon(pixmap);item.setIcon(self.thumbnail_icons[a['id']])
+                        else:
+                            cached.unlink(missing_ok=True);self.thumbnail_loader.submit(a)
+                if a['id']==current:w.setCurrentItem(item,QItemSelectionModel.SelectionFlag.NoUpdate)
+                item.setSelected(a['id'] in selected)
+            w.blockSignals(False);self.update_selection_count(role)
         self.a_sound.refresh_music(self.assets['music']);self.b_sound.refresh_music(self.assets['music'])
+    def update_selection_count(self,role):
+        self.counts[role].setText(f'{len(self.assets[role])} 条素材 · 已选 {len(self.lists[role].selectedItems())} 条')
+    def thumbnail_ready(self,key,path,error):
+        if path:
+            pixmap=QPixmap(path)
+            if pixmap.isNull():error='无法读取缩略图'
+            else:self.thumbnail_icons[key]=QIcon(pixmap)
+        for role in ('a','b'):
+            w=self.lists[role]
+            for n in range(w.count()):
+                item=w.item(n)
+                if item.data(Qt.ItemDataRole.UserRole)==key:
+                    if key in self.thumbnail_icons:item.setIcon(self.thumbnail_icons[key])
+                    elif error:
+                        item.setToolTip(item.toolTip()+'\n缩略图不可用：'+error)
+                        fallback=QPixmap(88,104);fallback.fill(QColor('#e8eef5'));p=QPainter(fallback);p.setPen(QColor('#66758a'));p.drawText(fallback.rect(),Qt.AlignmentFlag.AlignCenter,'预览不可用');p.end();item.setIcon(QIcon(fallback))
     def import_files(self,role):
         paths,_=QFileDialog.getOpenFileNames(self,'选择素材','','媒体 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.wav *.mp3 *.m4a *.flac *.aac);;所有文件 (*)')
         if paths:self.import_paths(role,paths)
@@ -368,31 +410,50 @@ class MainWindow(QMainWindow):
             if value['errors']:self.notify_error('以下素材未导入：\n'+'\n'.join(value['errors'][:12]))
             self.footer.setText(f'导入完成：{len(value["assets"])}条有效素材，相同内容自动去重。')
         self.start_work(lambda stop,notify:scan(expanded,role,stop,notify),done)
-    def selected(self,role):
+    def selected_assets(self,role):
         items=self.lists[role].selectedItems()
         if not items:raise ValueError('请先选中一条'+('前贴' if role=='a' else '素材')+'。')
-        key=items[0].data(Qt.ItemDataRole.UserRole);return next(a for a in self.assets[role] if a['id']==key)
+        keys={i.data(Qt.ItemDataRole.UserRole) for i in items};return [a for a in self.assets[role] if a['id'] in keys]
+    def selected(self,role):
+        assets=self.selected_assets(role)
+        if len(assets)>1:raise ValueError('此操作一次处理一条素材，请只选中一条。')
+        return assets[0]
     def remove_assets(self,role):
         if self.busy():return
         selected={i.data(Qt.ItemDataRole.UserRole) for i in self.lists[role].selectedItems()};self.assets[role]=[a for a in self.assets[role] if a['id'] not in selected];self.refresh_assets();self.save_session()
     def play_source(self,role):
-        try:Player(self.selected(role)['path'],self).exec()
+        try:
+            current=self.lists[role].currentItem()
+            if not current:raise ValueError('请先选中要播放的素材。')
+            key=current.data(Qt.ItemDataRole.UserRole);a=next(a for a in self.assets[role] if a['id']==key)
+            Player(a['path'],self).exec()
         except Exception as exc:self.notify_error(exc)
     def edit_intro(self):
         if self.busy():return
-        try:a=self.selected('a')
+        try:assets=self.selected_assets('a');a=assets[0]
         except Exception as exc:self.notify_error(exc);return
-        dialog=QDialog(self);dialog.setWindowTitle('单独设置 · '+a['name']);l=QVBoxLayout(dialog)
-        controls=SoundControls('覆盖此条前贴的声音设置','a',self.assets['music']);controls.load(dict(self.settings(),**self.overrides.get(a['id'],{})));l.addWidget(controls)
+        multiple=len(assets)>1
+        dialog=QDialog(self);dialog.setWindowTitle(f'批量设置 · {len(assets)} 条前贴' if multiple else '单独设置 · '+a['name']);l=QVBoxLayout(dialog)
+        apply_sound=QCheckBox('将下方声音设置应用到所有选中前贴');apply_sound.setChecked(True);apply_sound.setVisible(multiple);l.addWidget(apply_sound)
+        controls=SoundControls('选中前贴的声音设置','a',self.assets['music']);controls.load(dict(self.settings(),**self.overrides.get(a['id'],{})));l.addWidget(controls)
+        apply_sound.toggled.connect(controls.setEnabled)
+        apply_fixed=QCheckBox('修改每条选中前贴的指定次数（未勾选时保留原次数）');apply_fixed.setChecked(not multiple);apply_fixed.setVisible(multiple);l.addWidget(apply_fixed)
         fixed=spin(-1,len(self.assets['b']),self.overrides.get(a['id'],{}).get('fixed',-1));fixed.setSpecialValueText('自动分配');f=QFormLayout();f.addRow('指定使用次数（0=不用）',fixed);l.addLayout(f)
-        inherit=QCheckBox('移除此条声音覆盖，使用整批声音设置（保留字幕和指定次数）');l.addWidget(inherit)
+        fixed.setEnabled(not multiple);apply_fixed.toggled.connect(fixed.setEnabled)
+        inherit=QCheckBox('移除选中前贴的声音覆盖，使用整批声音设置');l.addWidget(inherit)
         note=QLabel('指定音乐模式会覆盖整批音乐。随机按前贴 / 每条成片模式仍按固定随机种子分配。');note.setWordWrap(True);l.addWidget(note)
         bb=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);bb.accepted.connect(dialog.accept);bb.rejected.connect(dialog.reject);l.addWidget(bb)
         if dialog.exec():
-            previous=self.overrides.get(a['id'],{});rows=previous.get('subtitle_rows')
-            self.overrides[a['id']]=dict(fixed=fixed.value(),subtitle_rows=rows)
-            if not inherit.isChecked():self.overrides[a['id']].update(controls.value())
+            self.apply_intro_overrides(assets,controls.value() if apply_sound.isChecked() else None,fixed.value() if apply_fixed.isChecked() else None,inherit.isChecked())
             self.refresh_assets();self.save_session()
+    def apply_intro_overrides(self,assets,sound=None,fixed=None,inherit=False):
+        for a in assets:
+            override=self.overrides.setdefault(a['id'],{})
+            if fixed is not None:override['fixed']=fixed
+            if inherit:
+                for key in list(override):
+                    if key.startswith('a_'):override.pop(key)
+            elif sound is not None:override.update(sound)
     def edit_subtitles(self):
         if self.busy():return
         try:a=self.selected('a')
@@ -623,6 +684,7 @@ class MainWindow(QMainWindow):
         role,ok=QInputDialog.getItem(self,'导入拖入的素材','添加到哪个列表？',['A 前贴','B 主视频','音乐库'],0,False)
         if ok:self.import_paths({'A 前贴':'a','B 主视频':'b','音乐库':'music'}[role],[u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()])
     def closeEvent(self,event):
+        self.thumbnail_loader.shutdown()
         if self.busy():
             self.worker.completed.disconnect()
             self.worker.event.disconnect()

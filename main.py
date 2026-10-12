@@ -25,6 +25,9 @@ def main():
         if mode=='--self-test':
             from montage.selftest import verify
             return verify(Path(sys.argv[2]))
+        if mode=='--ui-test':
+            from montage.uitest import verify
+            return verify(Path(sys.argv[2]))
         if mode in ('--delivery-test','--stress-test'):
             from montage.deliverytest import extras,stress
             return (extras if mode=='--delivery-test' else stress)(Path(sys.argv[2]))
