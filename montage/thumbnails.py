@@ -22,7 +22,7 @@ class ThumbnailLoader(QThread):
         self.folder.mkdir(parents=True, exist_ok=True)
 
     def path(self, key):
-        return self.folder / (key + '.jpg')
+        return self.folder / (key + '-v2.jpg')
 
     def submit(self, asset):
         with self.lock:
@@ -47,7 +47,7 @@ class ThumbnailLoader(QThread):
                     seconds = min(.8, max(0, asset['duration'] * .1))
                     args = [binary('ffmpeg'), '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                             '-ss', str(seconds), '-threads', '1', '-i', asset['path'],
-                            '-vf', 'scale=88:104:force_original_aspect_ratio=decrease,pad=88:104:(ow-iw)/2:(oh-ih)/2:color=0x14213b',
+                            '-vf', 'scale=176:208:force_original_aspect_ratio=decrease,pad=176:208:(ow-iw)/2:(oh-ih)/2:color=0x242424',
                             '-frames:v', '1', '-threads', '1', str(temp)]
                     flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == 'nt' else 0
                     process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

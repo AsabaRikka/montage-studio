@@ -1,5 +1,7 @@
 # 第三方组件与资源来源
 
+1.0.2界面导航图标来自Tabler Icons v3.35.0（MIT），保存于assets/ui/tabler，许可原文LICENSE.txt随包；派生的勾选/上下箭头仅改色。来源https://github.com/tabler/tabler-icons/tree/v3.35.0 。软件Logo与MontageStudio.ico是本项目原创拼接/播放标记，可由scripts/make_brand.py重建，没有使用Codex/OpenAI品牌标志。界面仅参考中性桌面风格，不声称使用Codex官方设计系统。
+
 混剪工坊源码按GPL-3.0发布（LICENSE），包含完整源码交付。FFmpeg 8.1.1 gyan.dev静态构建为GPL3，源版本239f2c733d，构建说明及许可随包。Qt/PySide6为动态库，LGPL3/GPL3许可原文随包，不嵌入静态Qt。软件没有限制替换兼容组件。
 
 faster-whisper MIT；CTranslate2 MIT；Whisper-small权重来自Systran/faster-whisper-small，Whisper MIT；ONNX Runtime MIT；NotoSansSC字体OFL。当前Python依赖版本和安装包原文许可分别在assets/dependency_versions.json和assets/licenses/current。

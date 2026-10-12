@@ -23,12 +23,18 @@ def main():
                 write_json(Path(sys.argv[3]),result)
             return 1 if result['counts'].get('failed') else 0
         if mode=='--self-test':
+            import os
+            os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
             from montage.selftest import verify
             return verify(Path(sys.argv[2]))
         if mode=='--ui-test':
+            import os
+            os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
             from montage.uitest import verify
             return verify(Path(sys.argv[2]))
         if mode in ('--delivery-test','--stress-test'):
+            import os
+            os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
             from montage.deliverytest import extras,stress
             return (extras if mode=='--delivery-test' else stress)(Path(sys.argv[2]))
     from montage.gui import launch

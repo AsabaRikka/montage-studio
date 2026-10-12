@@ -1,5 +1,7 @@
 # 技术方案与工作方式
 
+1.0.2：theme.py集中Qt浅深色与Tabler MIT图标；gallery.py用QListWidget IconMode及委托绘制自适应网格，不创建500套复杂子控件。原生CheckState与selection同步，普通点击累加、Shift区间、空格切换；保留既有selectedItems业务接口。assets/ui保存原创PNG/多尺寸ICO与图标许可，spec设置EXE图标。新缩略图-v2缓存提高分辨率；高DPI按目标矩形绘制。main.py诊断默认MONTAGE_DATA_DIR隔离，避免原旧入口写入源码data；事件及边界见HANDOFF。
+
 1.0.1 增量：thumbnails.py 使用单个后台队列低优先级调用内置 FFmpeg 取帧，按素材内容身份缓存 JPG；widgets.py 统一防止下拉/数字控件滚轮改值并把滚轮传递给外层滚动页面。uitest.py 提供真实 Qt 交互回归，冻结 EXE 同样运行；发布脚本按版本独立目录发布，拒绝覆盖含用户 data 的目录。
 
 更新：2026-10-11。开发已授权并实现，证据见PROGRESS。

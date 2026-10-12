@@ -12,8 +12,8 @@ root=Path(__file__).resolve().parent.parent
 release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
-parser.add_argument('--version',default='1.0.1')
-parser.add_argument('--verification',default='test_results/portable_v101')
+parser.add_argument('--version',default='1.0.2')
+parser.add_argument('--verification',default='test_results/portable_v102')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -46,7 +46,7 @@ elif args.mode=='zip':
         root/'docs/DELIVERY.md':'交付说明.md',
         verification/'delivery/gui/播放器实际视频帧.png':'实际解码帧.png',
         verification/'delivery/gui/导出完成.png':'便携导出完成.png'}
-    for name in ['缩略图与多选.png','批量设置.png','滚轮安全设置页.png']:items[verification/'ui'/name]=name
+    for name in ['缩略图与多选.png','批量设置.png','滚轮安全设置页.png','深色界面.png','网格_1040.png','500项网格.png','空库引导.png','缩略图失败提示.png']:items[verification/'ui'/name]=name
     portable=json.loads((verification/'便携验证.json').read_text(encoding='utf-8'))
     expected={'--self-test','--delivery-test','--screenshot','--ui-test'}
     if not portable.get('passed') or len(portable.get('checks',[]))!=4 or {c['command'] for c in portable['checks']}!=expected or any(c['exit_code'] for c in portable['checks']):

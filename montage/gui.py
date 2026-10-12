@@ -28,27 +28,13 @@ from .subtitles import read_srt,write_srt,align_script
 from .editing import FramePreview
 from .widgets import NoWheelComboBox as QComboBox, NoWheelSpinBox as QSpinBox, NoWheelDoubleSpinBox as QDoubleSpinBox
 from .thumbnails import ThumbnailLoader
+from . import __version__
+from .runtime import asset
+from .theme import stylesheet, apply as apply_theme, tokens, icon as ui_icon
+from .gallery import MaterialGrid, NAME, DETAIL, EXTRA, KIND, ERROR
 
 
-STYLE='''
-QWidget { font-family: "Microsoft YaHei UI"; font-size: 13px; color: #24334a; }
-QMainWindow,QDialog { background: #f4f6fa; }
-QTabWidget::pane { background: white; border: 1px solid #dde3ec; border-radius: 8px; }
-QTabBar::tab { padding: 12px 25px; color: #66758a; }
-QTabBar::tab:selected { background: white; color: #1b65b9; border-bottom: 3px solid #2877c5; }
-QGroupBox { border: 1px solid #dce3ec; border-radius: 7px; margin-top: 18px; padding: 14px 10px 8px; font-weight: 600; }
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; }
-QPushButton { background: #edf2f8; border: 1px solid #d8e1ec; border-radius: 5px; padding: 8px 14px; }
-QPushButton:hover { background: #e0ebf8; border-color: #a4bdd9; }
-QPushButton:disabled { color: #94a0b1; background: #f0f2f6; }
-QPushButton[primary="true"] { background: #246fbb; color: white; border-color: #246fbb; font-weight: 600; }
-QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QPlainTextEdit { background: white; border: 1px solid #d5deea; border-radius: 4px; padding: 5px; }
-QTableWidget,QListWidget { border: 1px solid #dce3ec; background: white; alternate-background-color: #f7f9fc; selection-background-color: #dceafb; selection-color: #16466e; }
-QHeaderView::section { background: #eef3f9; padding: 7px; border: none; border-bottom: 1px solid #dce3ec; font-weight: 600; }
-QProgressBar { border: none; border-radius: 5px; background: #e4ebf3; height: 16px; text-align: center; }
-QProgressBar::chunk { background: #3988cd; border-radius: 5px; }
-QLabel[muted="true"] { color: #788599; }
-'''
+STYLE=stylesheet()
 
 
 def button(text,callback,primary=False):
@@ -222,21 +208,45 @@ class SubtitleDialog(QDialog):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio 1.0.1');self.resize(1220,880);self.setMinimumSize(990,720)
+        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio '+__version__);self.resize(1280,880);self.setMinimumSize(1040,720)
+        self.setWindowIcon(QIcon(str(asset('ui/MontageStudio.ico'))))
+        self.dark=False;self.nav_buttons=[];self.icon_buttons=[]
         self.store=Store();self.assets={'a':[],'b':[],'music':[]};self.overrides={};self.plan=[];self.plan_settings=[];self.plan_assets={};self.bid=None;self.worker=None;self.last_preview='';self.api_key='';self.api_config={}
         self.thumbnail_loader=ThumbnailLoader(self);self.thumbnail_loader.ready.connect(self.thumbnail_ready)
         self.thumbnail_icons={};self.thumbnail_loader.start()
-        placeholder=QPixmap(88,104);placeholder.fill(QColor('#e8eef5'))
-        painter=QPainter(placeholder);painter.setPen(QColor('#66758a'));painter.drawText(placeholder.rect(),Qt.AlignmentFlag.AlignCenter,'预览加载中');painter.end()
-        self.thumbnail_placeholder=QIcon(placeholder)
+        self.thumbnail_placeholder=QIcon()
         self.setAcceptDrops(True)
-        root=QWidget();self.setCentralWidget(root);layout=QVBoxLayout(root);layout.setContentsMargins(22,16,22,14)
-        header=QHBoxLayout();brand=QLabel('混剪工坊');brand.setStyleSheet('font-size:25px;font-weight:700;color:#15354f;');header.addWidget(brand)
-        tagline=QLabel('前贴 × 游戏素材  /  本机批量制作');tagline.setProperty('muted',True);header.addWidget(tagline);header.addStretch();header.addWidget(button('使用说明',self.help));layout.addLayout(header)
-        self.tabs=QTabWidget();layout.addWidget(self.tabs,1)
+        root=QWidget();self.setCentralWidget(root);shell=QHBoxLayout(root);shell.setContentsMargins(0,0,0,0);shell.setSpacing(0)
+        sidebar=QWidget();sidebar.setObjectName('sidebar');sidebar.setFixedWidth(190);sl=QVBoxLayout(sidebar);sl.setContentsMargins(16,24,16,18);sl.setSpacing(6)
+        logo=QLabel();logo.setPixmap(QPixmap(str(asset('ui/logo.png'))).scaled(38,38,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+        brand=QLabel('混剪工坊');brand.setObjectName('brand');brand_row=QHBoxLayout();brand_row.addWidget(logo);brand_row.addWidget(brand);brand_row.addStretch();sl.addLayout(brand_row)
+        caption=QLabel('本机视频批量制作');caption.setProperty('muted',True);sl.addWidget(caption);sl.addSpacing(30)
+        names=['素材','画面与声音','组合计划','导出队列','本机历史'];icons=['layout-grid','adjustments-horizontal','arrows-shuffle','player-play','history']
+        for n,(name,glyph) in enumerate(zip(names,icons)):
+            b=button(name,lambda checked=False,i=n:self.tabs.setCurrentIndex(i));b.setProperty('nav',True);b.setCheckable(True);b.setIconSize(QSize(18,18));sl.addWidget(b);self.nav_buttons.append(b);self.icon_buttons.append((b,glyph))
+        sl.addStretch();self.theme_button=button('切换深色',self.toggle_theme);self.theme_button.setProperty('quiet',True);sl.addWidget(self.theme_button)
+        help_button=button('使用说明',self.help);help_button.setProperty('quiet',True);sl.addWidget(help_button)
+        offline=QLabel('离线处理，素材不上传');offline.setProperty('muted',True);sl.addWidget(offline);shell.addWidget(sidebar)
+        content=QWidget();layout=QVBoxLayout(content);layout.setContentsMargins(26,24,26,14);layout.setSpacing(8);shell.addWidget(content,1)
+        self.page_title=QLabel('素材');self.page_title.setObjectName('pageTitle');layout.addWidget(self.page_title)
+        self.page_description=QLabel();self.page_description.setObjectName('pageDescription');layout.addWidget(self.page_description);layout.addSpacing(12)
+        self.tabs=QTabWidget();self.tabs.tabBar().hide();layout.addWidget(self.tabs,1)
         self.material_tab();self.settings_tab();self.plan_tab();self.queue_tab();self.history_tab()
         self.footer=QLabel('所有视频、字幕识别和音乐分离均在本机处理。');self.footer.setProperty('muted',True);layout.addWidget(self.footer)
-        self.load_session();self.refresh_assets();self.refresh_batches()
+        self.tabs.currentChanged.connect(self.update_navigation)
+        self.load_session();self.refresh_assets();self.refresh_batches();self.update_navigation(0);self.set_theme(self.dark,save=False)
+    def update_navigation(self,index):
+        titles=['素材','画面与声音','组合计划','导出队列','本机历史']
+        descriptions=['导入前贴、主视频与音乐，勾选后批量管理。','设置整批画面、声音与字幕，前贴可单独覆盖。','先检查配对与使用次数，再固定任务导出。','已完成成片保留，暂停后可继续。','配对历史只保存在本机，换音乐不算新配对。']
+        self.page_title.setText(titles[index]);self.page_description.setText(descriptions[index])
+        for n,b in enumerate(self.nav_buttons):b.setChecked(n==index)
+    def toggle_theme(self):self.set_theme(not self.dark)
+    def set_theme(self,dark,save=True):
+        self.dark=bool(dark);apply_theme(QApplication.instance(),self.dark);t=tokens(self.dark)
+        for b,glyph in self.icon_buttons:b.setIcon(ui_icon(glyph,t['on_accent'] if b.property('primary') else t['ink']))
+        self.theme_button.setText('切换浅色' if self.dark else '切换深色');self.theme_button.setIcon(ui_icon('sun' if self.dark else 'moon',t['ink']))
+        for w in self.lists.values():w.dark=self.dark;w.viewport().update()
+        if save:self.save_session()
     def notify_error(self,exc):QMessageBox.warning(self,'请检查',str(exc)[-2500:])
     def busy(self):return self.worker is not None and self.worker.isRunning()
     def start_work(self,func,done):
@@ -259,24 +269,26 @@ class MainWindow(QMainWindow):
                 self.queue_status.setText(f'完成 {complete} / {self.jobs_table.rowCount()} · 当前第{e["number"]}条')
         elif e['type']=='progress':self.current_progress.setValue(e['value'])
     def material_tab(self):
-        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
-        row=QHBoxLayout();row.addWidget(QLabel('游戏 / 历史分组'));self.game=QLineEdit('默认游戏');row.addWidget(self.game);self.recursive=QCheckBox('导入文件夹包含子文件夹');self.recursive.setChecked(True);row.addWidget(self.recursive);l.addLayout(row)
-        note=QLabel('点击缩略图选择素材；Ctrl 多选、Shift 连选，也可全选后批量移除 / 设置前贴。双击播放；主视频默认保留原声。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
-        row=QHBoxLayout();self.lists={};self.counts={}
-        for role,title in [('a','A · AI前贴'),('b','B · 游戏主视频'),('music','音乐库')]:
-            box=QGroupBox(title);bl=QVBoxLayout(box);self.counts[role]=QLabel('0条素材');bl.addWidget(self.counts[role])
-            w=QListWidget();w.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection);self.lists[role]=w;bl.addWidget(w,1)
-            w.setTextElideMode(Qt.TextElideMode.ElideRight);w.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            if role!='music':w.setIconSize(QSize(88,104));w.setSpacing(3)
+        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(0,0,0,0);l.setSpacing(12)
+        row=QHBoxLayout();row.addWidget(QLabel('游戏 / 历史分组'));self.game=QLineEdit('默认游戏');self.game.setMaximumWidth(420);row.addWidget(self.game,1);row.addStretch();self.recursive=QCheckBox('包含子文件夹');self.recursive.setChecked(True);row.addWidget(self.recursive);l.addLayout(row)
+        self.material_tabs=QTabWidget();self.material_tabs.setDocumentMode(True);self.lists={};self.counts={};l.addWidget(self.material_tabs,1)
+        for role,title in [('a','A 前贴'),('b','B 主视频'),('music','音乐库')]:
+            panel=QWidget();bl=QVBoxLayout(panel);bl.setContentsMargins(0,16,0,0);bl.setSpacing(10)
+            br=QHBoxLayout();self.counts[role]=QLabel('0 条素材 · 已选 0 条');self.counts[role].setProperty('muted',True);br.addWidget(self.counts[role]);br.addStretch()
+            for text,callback,glyph,primary in [('添加文件',lambda checked=False,r=role:self.import_files(r),'plus',True),('添加文件夹',lambda checked=False,r=role:self.import_folder(r),'folder',False)]:
+                b=button(text,callback,primary);b.setIconSize(QSize(16,16));br.addWidget(b);self.icon_buttons.append((b,glyph))
+            bl.addLayout(br)
+            w=MaterialGrid(role);self.lists[role]=w;bl.addWidget(w,1)
             w.itemSelectionChanged.connect(lambda r=role:self.update_selection_count(r))
             w.itemDoubleClicked.connect(lambda item,r=role:self.play_source(r))
-            br=QHBoxLayout();br.addWidget(button('全选',w.selectAll));br.addWidget(button('取消选择',w.clearSelection));bl.addLayout(br)
-            br=QHBoxLayout();br.addWidget(button('添加文件',lambda checked=False,r=role:self.import_files(r)));br.addWidget(button('添加文件夹',lambda checked=False,r=role:self.import_folder(r)));bl.addLayout(br)
-            br=QHBoxLayout();br.addWidget(button('移除选中',lambda checked=False,r=role:self.remove_assets(r)));br.addWidget(button('播放原片',lambda checked=False,r=role:self.play_source(r)));bl.addLayout(br)
+            br=QHBoxLayout();all_button=button('全选',w.selectAll);clear_button=button('取消选择',w.clearSelection)
+            for b in [all_button,clear_button]:b.setProperty('quiet',True);br.addWidget(b)
+            br.addStretch();br.addWidget(button('移除选中',lambda checked=False,r=role:self.remove_assets(r)));br.addWidget(button('播放原片',lambda checked=False,r=role:self.play_source(r)));bl.addLayout(br)
             if role=='a':
-                bl.addWidget(button('设置选中前贴 / 指定使用次数',self.edit_intro));bl.addWidget(button('编辑 / 识别字幕（单条）',self.edit_subtitles,True))
-            row.addWidget(box,1)
-        l.addLayout(row,1);l.addWidget(button('下一步：设置画面与声音',lambda:self.tabs.setCurrentIndex(1),True));self.tabs.addTab(page,'① 素材')
+                br=QHBoxLayout();br.addWidget(button('设置选中前贴 / 指定使用次数',self.edit_intro));br.addWidget(button('编辑 / 识别字幕（单条）',self.edit_subtitles));br.addStretch();bl.addLayout(br)
+            self.material_tabs.addTab(panel,title+' (0)')
+        row=QHBoxLayout();note=QLabel('直接勾选即可多选，双击播放。主视频默认保留原声。');note.setProperty('muted',True);row.addWidget(note);row.addStretch();row.addWidget(button('下一步：画面与声音',lambda:self.tabs.setCurrentIndex(1),True));l.addLayout(row)
+        self.tabs.addTab(page,'① 素材')
     def settings_tab(self):
         scroll=QScrollArea();scroll.setWidgetResizable(True);page=QWidget();scroll.setWidget(page);l=QVBoxLayout(page)
         row=QHBoxLayout();box=QGroupBox('画面与导出');f=QFormLayout(box)
@@ -307,7 +319,8 @@ class MainWindow(QMainWindow):
         row.addWidget(button('生成 / 重新生成计划',self.generate_plan,True));l.addLayout(row)
         self.plan_summary=QLabel('计划尚未生成。生成后可双击前贴或主视频列更换配对，再检查无重复和使用次数。');self.plan_summary.setWordWrap(True);l.addWidget(self.plan_summary)
         self.plan_table=table(['序号','前贴','主视频','前贴音乐','主视频音乐','转场']);self.plan_table.cellDoubleClicked.connect(self.edit_pair);l.addWidget(self.plan_table,1)
-        row=QHBoxLayout();row.addWidget(button('预览选中成片',self.preview,True));row.addWidget(button('播放上次预览',self.play_last));row.addWidget(button('保存计划 CSV',self.export_plan));row.addStretch();row.addWidget(button('固定计划并创建导出任务',self.create_batch,True));l.addLayout(row)
+        row=QHBoxLayout();row.addWidget(button('预览选中成片',self.preview));row.addWidget(button('播放上次预览',self.play_last));row.addWidget(button('保存计划 CSV',self.export_plan));row.addStretch();l.addLayout(row)
+        row=QHBoxLayout();row.addStretch();row.addWidget(button('固定计划并创建导出任务',self.create_batch,True));l.addLayout(row)
         self.tabs.addTab(page,'③ 组合计划')
     def queue_tab(self):
         page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
@@ -317,13 +330,15 @@ class MainWindow(QMainWindow):
         self.jobs_table=table(['序号','前贴','主视频','状态','输出文件','错误']);self.jobs_table.cellDoubleClicked.connect(self.play_job);l.addWidget(self.jobs_table,1)
         row=QHBoxLayout();row.addWidget(button('开始 / 继续待处理',lambda:self.start_batch(False),True));row.addWidget(button('重试失败 + 继续',lambda:self.start_batch(True)))
         self.cancel_work=button('暂停当前处理',self.pause);self.cancel_work.setEnabled(False);row.addWidget(self.cancel_work)
-        row.addWidget(button('打开输出目录',self.open_output));row.addWidget(button('重定位遗失素材',self.relocate));row.addWidget(button('放弃未完成任务',self.abandon));l.addLayout(row)
+        row.addStretch();l.addLayout(row)
+        row=QHBoxLayout();row.addWidget(button('打开输出目录',self.open_output));row.addWidget(button('重定位遗失素材',self.relocate));row.addWidget(button('放弃未完成任务',self.abandon));row.addStretch();l.addLayout(row)
         self.log=QPlainTextEdit();self.log.setReadOnly(True);self.log.setMaximumBlockCount(800);self.log.setMaximumHeight(130);l.addWidget(self.log)
         self.tabs.addTab(page,'④ 导出队列')
     def history_tab(self):
         page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
         self.history_summary=QLabel();l.addWidget(self.history_summary);self.history_table=table(['游戏','前贴身份','主视频身份','完成时间','输出位置']);l.addWidget(self.history_table,1)
-        row=QHBoxLayout();row.addWidget(button('刷新历史',self.refresh_history));row.addWidget(button('备份任务与历史',self.backup));row.addWidget(button('恢复备份',self.restore));row.addWidget(button('导出历史 CSV',self.export_history));row.addWidget(button('清理媒体缓存',self.clear_cache));row.addStretch();l.addLayout(row)
+        row=QHBoxLayout();row.addWidget(button('刷新历史',self.refresh_history));row.addWidget(button('备份任务与历史',self.backup));row.addWidget(button('恢复备份',self.restore));row.addStretch();l.addLayout(row)
+        row=QHBoxLayout();row.addWidget(button('导出历史 CSV',self.export_history));row.addWidget(button('清理媒体缓存',self.clear_cache));row.addStretch();l.addLayout(row)
         note=QLabel('历史仅在本机保存，成功成片才记入历史。删除成片不会清除配对。完整备份包含任务与配方，不包含源视频。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
         self.tabs.addTab(page,'⑤ 本机历史');self.refresh_history()
     def settings(self):
@@ -338,10 +353,11 @@ class MainWindow(QMainWindow):
         self.subtitles.setChecked(s.get('subtitles',False));self.vocabulary.setText(s.get('vocabulary',''));self.font_color.setText(s.get('font_color','#FFFFFF'));self.output.setText(s.get('output') or str(Path.home()/'Videos'/'混剪成片'))
         self.a_sound.load(s);self.b_sound.load(s)
     def save_session(self):
-        write_json(data_dir()/'session.json',dict(assets=self.assets,overrides=self.overrides,settings=self.settings(),game=self.game.text(),quantity=self.quantity.value(),mode=self.mode.currentData(),seed=self.seed.value(),api=self.api_config))
+        write_json(data_dir()/'session.json',dict(assets=self.assets,overrides=self.overrides,settings=self.settings(),game=self.game.text(),quantity=self.quantity.value(),mode=self.mode.currentData(),seed=self.seed.value(),api=self.api_config,ui_theme='dark' if self.dark else 'light'))
     def load_session(self):
         try:
             s=json.loads((data_dir()/'session.json').read_text(encoding='utf-8'));self.assets=s.get('assets',self.assets);self.overrides=s.get('overrides',{})
+            self.dark=s.get('ui_theme','light')=='dark'
             self.refresh_assets();self.apply_settings(s.get('settings',{}));self.game.setText(s.get('game','默认游戏'));self.quantity.setValue(s.get('quantity',1000));set_combo(self.mode,s.get('mode','balanced'));self.seed.setValue(s.get('seed',42));self.api_config=s.get('api',{})
         except (OSError,ValueError,KeyError):pass
     def refresh_assets(self):
@@ -358,9 +374,11 @@ class MainWindow(QMainWindow):
                     extra=' · 单独设置'
                     if override.get('fixed',-1)>=0:extra+=f' · {override["fixed"]}次'
                     if override.get('subtitle_rows') is not None:extra+=' · 已校正字幕'
-                item=QListWidgetItem(f'{prefix}{a["name"]}\n{a["duration"]:.1f}s · {a["width"]}×{a["height"]}{extra}');item.setToolTip(a['path']);item.setData(Qt.ItemDataRole.UserRole,a['id']);w.addItem(item)
+                detail=f'{a["duration"]:.1f}s' if role=='music' else f'{a["duration"]:.1f}s · {a["width"]}×{a["height"]}'
+                item=QListWidgetItem(prefix+a['name']);item.setToolTip(a['name']+'\n'+a['path']+extra);item.setData(Qt.ItemDataRole.UserRole,a['id']);item.setData(NAME,prefix+a['name']);item.setData(DETAIL,detail);item.setData(EXTRA,extra.lstrip(' ·'));item.setData(KIND,role)
+                item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Unchecked);w.addItem(item)
                 if role!='music':
-                    item.setSizeHint(QSize(0,112));item.setIcon(self.thumbnail_icons.get(a['id'],self.thumbnail_placeholder))
+                    item.setIcon(self.thumbnail_icons.get(a['id'],self.thumbnail_placeholder))
                     cached=self.thumbnail_loader.path(a['id'])
                     if a['id'] not in self.thumbnail_icons:
                         pixmap=QPixmap(str(cached)) if cached.exists() else QPixmap()
@@ -370,10 +388,12 @@ class MainWindow(QMainWindow):
                             cached.unlink(missing_ok=True);self.thumbnail_loader.submit(a)
                 if a['id']==current:w.setCurrentItem(item,QItemSelectionModel.SelectionFlag.NoUpdate)
                 item.setSelected(a['id'] in selected)
-            w.blockSignals(False);self.update_selection_count(role)
+            w.blockSignals(False);w.sync_checks();self.update_selection_count(role)
         self.a_sound.refresh_music(self.assets['music']);self.b_sound.refresh_music(self.assets['music'])
     def update_selection_count(self,role):
         self.counts[role].setText(f'{len(self.assets[role])} 条素材 · 已选 {len(self.lists[role].selectedItems())} 条')
+        i={'a':0,'b':1,'music':2}[role]
+        if i<self.material_tabs.count():self.material_tabs.setTabText(i,{'a':'A 前贴','b':'B 主视频','music':'音乐库'}[role]+f' ({len(self.assets[role])})')
     def thumbnail_ready(self,key,path,error):
         if path:
             pixmap=QPixmap(path)
@@ -384,10 +404,10 @@ class MainWindow(QMainWindow):
             for n in range(w.count()):
                 item=w.item(n)
                 if item.data(Qt.ItemDataRole.UserRole)==key:
-                    if key in self.thumbnail_icons:item.setIcon(self.thumbnail_icons[key])
+                    if key in self.thumbnail_icons:item.setIcon(self.thumbnail_icons[key]);item.setData(ERROR,'')
                     elif error:
                         item.setToolTip(item.toolTip()+'\n缩略图不可用：'+error)
-                        fallback=QPixmap(88,104);fallback.fill(QColor('#e8eef5'));p=QPainter(fallback);p.setPen(QColor('#66758a'));p.drawText(fallback.rect(),Qt.AlignmentFlag.AlignCenter,'预览不可用');p.end();item.setIcon(QIcon(fallback))
+                        item.setData(ERROR,error);item.setIcon(QIcon())
     def import_files(self,role):
         paths,_=QFileDialog.getOpenFileNames(self,'选择素材','','媒体 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.wav *.mp3 *.m4a *.flac *.aac);;所有文件 (*)')
         if paths:self.import_paths(role,paths)
@@ -693,7 +713,7 @@ class MainWindow(QMainWindow):
 
 
 def launch(argv):
-    app=QApplication(argv);app.setStyle('Fusion');app.setStyleSheet(STYLE)
+    app=QApplication(argv);app.setStyle('Fusion');apply_theme(app);app.setWindowIcon(QIcon(str(asset('ui/MontageStudio.ico'))))
     lock=QLockFile(str(data_dir()/'app.lock'));lock.setStaleLockTime(0)
     if not lock.tryLock(0):
         QMessageBox.information(None,'混剪工坊','软件已经运行，请回到已打开的窗口。');return 0

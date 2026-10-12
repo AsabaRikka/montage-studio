@@ -618,5 +618,130 @@
     "path": "licenses/av/licenses/LICENSE.txt",
     "size": 1528,
     "sha256": "f32ebcb6007dcc05eea369b3820e6391b0a7ef1ed763f30f1aca15dfdbacbe96"
+  },
+  {
+    "path": "ui/check-dark.svg",
+    "size": 340,
+    "sha256": "618b19354cb84766d13a70df324cbbe297165a1067ca5e99c439f26987b1e24b"
+  },
+  {
+    "path": "ui/check-light.svg",
+    "size": 340,
+    "sha256": "a045452b7b6730af7120f84c1ddcd1e67b5c51ce1b3e70365027602b4da804bb"
+  },
+  {
+    "path": "ui/chevron-down-dark.svg",
+    "size": 342,
+    "sha256": "770c0188d4f6b11ce65c5bea10d278116a650b6603c1c85545b0792dac84b7c2"
+  },
+  {
+    "path": "ui/chevron-down-light.svg",
+    "size": 342,
+    "sha256": "11a4320b7aad352e34bbc0f879000d3d69601d93ef5082eff22532024d74310c"
+  },
+  {
+    "path": "ui/chevron-up-dark.svg",
+    "size": 327,
+    "sha256": "57bf23900e8ea469b0cbd9e9be93ffdc6bcc686fcde954d39117bc3d2ad28c12"
+  },
+  {
+    "path": "ui/chevron-up-light.svg",
+    "size": 327,
+    "sha256": "6f9c55d974814d0001c76e3379ab561f2ab6019ac298151da71ddc6984b06dc0"
+  },
+  {
+    "path": "ui/logo.png",
+    "size": 16664,
+    "sha256": "191b673d7d146853214de5063181cbbb70f183600403c519ca407f423fddc752"
+  },
+  {
+    "path": "ui/MontageStudio.ico",
+    "size": 22083,
+    "sha256": "da7fd2b5ad147f1512c5085f28c04125506cb5c56ead96fb0a42673608be7929"
+  },
+  {
+    "path": "ui/tabler/adjustments-horizontal.svg",
+    "size": 640,
+    "sha256": "bf18075fdfb84e6ac616fe512e13f7aae4c3f4b5a1e523408a66c8eb6ee0c79a"
+  },
+  {
+    "path": "ui/tabler/arrows-shuffle.svg",
+    "size": 504,
+    "sha256": "4a3472f18bac09581a9860150bcc85c60543a9c4a68d01b2081f3d6480a15bca"
+  },
+  {
+    "path": "ui/tabler/check.svg",
+    "size": 326,
+    "sha256": "1445caacdd4e35f6a7c680e3c820856a5ffdb96c2c9c8a6963b4485727ff662b"
+  },
+  {
+    "path": "ui/tabler/chevron-down.svg",
+    "size": 328,
+    "sha256": "a095650d385a333f147922ac05374bc17a5014bc1249f06d98f7114330b28a21"
+  },
+  {
+    "path": "ui/tabler/chevron-right.svg",
+    "size": 324,
+    "sha256": "00e81f3a02f69089a08d5021086bf9ac1464f4ba514773908f66f777dbf9adb0"
+  },
+  {
+    "path": "ui/tabler/chevron-up.svg",
+    "size": 313,
+    "sha256": "1b3cc57b4b524225668caff4acfbfd68cc0105efebf4d94b8cb85fd6daf71cd0"
+  },
+  {
+    "path": "ui/tabler/folder.svg",
+    "size": 402,
+    "sha256": "22e5e5fb9d77af98510337902fe0a3f008b412ddd7d51ce9b4960def073b43f1"
+  },
+  {
+    "path": "ui/tabler/history.svg",
+    "size": 385,
+    "sha256": "cb6871740e98093d7df375eecd0784703ae937cc368a4ece50d6801fd9b083b0"
+  },
+  {
+    "path": "ui/tabler/layout-grid.svg",
+    "size": 677,
+    "sha256": "b21a4a4192302eab66d931a280dfe8cbc20331f411aea3b36b5f978417c59ffc"
+  },
+  {
+    "path": "ui/tabler/LICENSE.txt",
+    "size": 1073,
+    "sha256": "5a3b65e1ad6a081759fde376fe14e2cd88552a9ebea89a8168f34eab1e96109f"
+  },
+  {
+    "path": "ui/tabler/moon.svg",
+    "size": 385,
+    "sha256": "a0ae8e9b875db0f914d5d7702afaf87b1ae78fcc09acc1ae4dca63c930e49b43"
+  },
+  {
+    "path": "ui/tabler/music.svg",
+    "size": 463,
+    "sha256": "948c112b0efad66b3e856e266a823e27378da20a62a4badcb54934e312e46fe1"
+  },
+  {
+    "path": "ui/tabler/player-play.svg",
+    "size": 337,
+    "sha256": "9c30092ecfea4578ecf2669269ce4334a24d82667e61fabba7f6c552447d1c77"
+  },
+  {
+    "path": "ui/tabler/plus.svg",
+    "size": 345,
+    "sha256": "5c22bc4601782a1aba6f67a6a97fbb864c6cf75a4aa1f012ae3f8478d1b128d2"
+  },
+  {
+    "path": "ui/tabler/sun.svg",
+    "size": 469,
+    "sha256": "6eaf26aaf098f0acd1e7f5c3ea616f14c55576577e83f5f53a97990f25183272"
+  },
+  {
+    "path": "ui/tabler/trash.svg",
+    "size": 526,
+    "sha256": "7a2589ce64766746193cd49dc87707fe43ba75eaf3af015393e200b8fe8fd608"
+  },
+  {
+    "path": "ui/tabler/video.svg",
+    "size": 506,
+    "sha256": "ac8190db43d2dcaebbcece6b96e62f0c39eba3a6979f20a51170ebf623bc1dc6"
   }
 ]

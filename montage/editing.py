@@ -56,7 +56,7 @@ class FrameCanvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor('#14213b'))
+        painter.fillRect(self.rect(), QColor('#242424'))
         rect = self.image_rect()
         if not rect.isEmpty():
             painter.drawPixmap(rect, self.pixmap, QRectF(self.pixmap.rect()))
