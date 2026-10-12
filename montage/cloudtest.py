@@ -78,10 +78,15 @@ def verify(folder):
             return dict(zero_redownload=True,no_duplicate_A=True,overrides_preserved=True,search_and_filter=True)
         check('增量复用_设置保护_搜索',repeat)
         def playback_and_render():
-            first=window.assets['a'][0];player=Player(first['path'],window);player.show()
+            from PySide6.QtMultimedia import QMediaPlayer
+            first=window.assets['a'][0];player=Player(first['path'],window);frames=[]
+            player.video.videoSink().videoFrameChanged.connect(lambda frame:frames.append(frame.toImage()) if frame.isValid() else None)
+            player.show()
             try:
-                wait(lambda:player.player.position()>400,30)
-                player.video.grab().save(str(folder/'云端原片实际播放帧.png'));position=player.player.position()
+                wait(lambda:player.player.position()>650 and frames and not frames[-1].isNull(),30)
+                assert player.player.hasVideo() and player.player.error()==QMediaPlayer.Error.NoError
+                assert frames[-1].save(str(folder/'云端原片实际播放帧.png'))
+                position=player.player.position()
             finally:player.done(0)
             _,b,_,_=fixtures(folder/'合成主视频')
             window.assets['b']=scan([b],'b')['assets'];window.refresh_assets()
@@ -109,7 +114,10 @@ def verify(folder):
                 try:result=lib.sync(lib.library['items'])
                 finally:FeishuCLI.call=original
                 assert result['reused']==len(expected) and not result['errors']
-                reopened.material_tabs.setCurrentWidget(reopened.cloud_panel);reopened.set_theme(True);QTest.qWait(120)
+                reopened.material_tabs.setCurrentWidget(reopened.cloud_panel);reopened.set_theme(True)
+                grid=reopened.cloud_panel.grid
+                wait(lambda:all(not grid.item(i).icon().isNull() for i in range(grid.count())))
+                QTest.qWait(150)
                 reopened.grab().save(str(folder/'云端深色重开.png'))
                 return dict(reopen=True,offline_cache_reused=True,theme=True)
             finally:reopened.close();app.processEvents()

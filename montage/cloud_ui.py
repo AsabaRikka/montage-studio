@@ -33,11 +33,11 @@ class CloudPanel(QWidget):
         row.addWidget(self.sync_button); layout.addLayout(row)
         note = QLabel('只读取“成品文件”中的视频。已同步素材可离线使用；备注仅作提示，不自动改片。移出 A 前贴不会删除云端附件。')
         note.setWordWrap(True); note.setProperty('muted',True); layout.addWidget(note)
+        window.thumbnail_loader.ready.connect(self.thumbnail_ready)
         try:
             self.library = CloudLibrary(); self.url.setText(self.library.config.get('url',DEFAULT_URL)); self.render()
         except Exception as exc:
             self.status.setText(str(exc)); self.refresh_button.setEnabled(False); self.connect_button.setEnabled(False)
-        window.thumbnail_loader.ready.connect(self.thumbnail_ready)
 
     def open_table(self):
         try:
@@ -82,6 +82,11 @@ class CloudPanel(QWidget):
             item.setSelected(key in selected)
             if cached:
                 icon = self.window.thumbnail_icons.get(cached['id'])
+                if not icon:
+                    path=self.window.thumbnail_loader.path(cached['id'])
+                    pixmap=QPixmap(str(path)) if path.exists() else QPixmap()
+                    if not pixmap.isNull():
+                        icon=QIcon(pixmap);self.window.thumbnail_icons[cached['id']]=icon
                 if icon: item.setIcon(icon)
                 else: self.window.thumbnail_loader.submit(cached)
             else:

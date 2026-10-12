@@ -162,7 +162,7 @@ class CloudLibrary:
                 path.unlink(missing_ok=True)
                 path.with_suffix('.manifest.json').unlink(missing_ok=True)
         items = normalize_records(records, target)
-        catalog = dict(target=target, items=items, cache=self.library.get('cache', {}), records=len(records),
+        catalog = dict(target=target, source_url=self.config['url'], items=items, cache=self.library.get('cache', {}), records=len(records),
                        refreshed=time.strftime('%Y-%m-%d %H:%M:%S'))
         write_json(self.folder/'library.json', catalog)
         self.library = catalog
@@ -178,6 +178,7 @@ class CloudLibrary:
 
     def sync(self, items, stop=None, notify=lambda _: None):
         cli = self.cli(); target = self.library['target']
+        source_url = self.library.get('source_url', self.config['url'])
         assets = []; errors = []; downloaded = 0; reused = 0; cancelled = False
         for index, item in enumerate(items, 1):
             if stop and stop.is_set(): cancelled = True; break
@@ -187,7 +188,7 @@ class CloudLibrary:
                 cached = self.cached(item)
                 if cached and identity(cached['path']) == cached['id']:
                     cached['name'] = item['name']+' · '+item['filename']
-                    cached['cloud'] = dict(item, source_url=self.config['url'])
+                    cached['cloud'] = dict(item, source_url=source_url)
                     assets.append(cached); reused += 1; continue
                 suffix = Path(item['filename']).suffix.lower()
                 relative = Path('files')/item['key']/('video'+suffix)
@@ -205,7 +206,7 @@ class CloudLibrary:
                 if not result['assets']: raise ValueError('视频无法读取，未加入前贴。')
                 record = result['assets'][0]
                 temp.replace(final)
-                record.update(path=str(final), name=item['name']+' · '+item['filename'], cloud=dict(item, source_url=self.config['url']))
+                record.update(path=str(final), name=item['name']+' · '+item['filename'], cloud=dict(item, source_url=source_url))
                 self.library.setdefault('cache', {})[item['key']] = dict(relative_path=relative.as_posix(), asset=record)
                 write_json(self.folder/'library.json', self.library)
                 assets.append(record); downloaded += 1

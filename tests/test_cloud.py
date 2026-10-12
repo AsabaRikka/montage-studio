@@ -51,7 +51,8 @@ def test_sync_failure_cancel_and_offline_reuse(tmp_path,monkeypatch):
     library=CloudLibrary(tmp_path);target=dict(base_token='base',table_id='table')
     items=normalize_records([row(1),row(2),row(3)],target)
     for item in items:item['size']=3
-    library.library.update(target=target,items=items)
+    original_url=library.config['url']
+    library.library.update(target=target,items=items,source_url=original_url)
     class CLI:
         work=tmp_path
         downloads=0
@@ -75,8 +76,10 @@ def test_sync_failure_cancel_and_offline_reuse(tmp_path,monkeypatch):
     assert result['cancelled'] and result['reused']==1 and len(result['assets'])==1
     def no_network(*args,**kwargs):raise AssertionError('network called')
     cli.call=no_network
+    library.save_config('https://my.feishu.cn/base/other?table=other','')
     result=library.sync([items[0],items[2]])
     assert result['reused']==2 and not result['errors']
+    assert all(a['cloud']['source_url']==original_url for a in result['assets'])
     library.library['cache'][items[0]['key']]['relative_path']='../outside.mp4'
     assert library.cached(items[0]) is None
 
