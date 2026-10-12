@@ -20,7 +20,7 @@ parser.add_argument('--cloud-verification',default='test_results/cloud_v107_port
 parser.add_argument('--cloud-baseline-version',default='',help='Reuse historical cloud evidence only when cloud modules are unchanged; no current EXE claim.')
 parser.add_argument('--player-verification',default='test_results/player_v107_portable')
 parser.add_argument('--subtitle-verification',default='test_results/subtitle_v107_portable')
-parser.add_argument('--history-verification',default='test_results/history_v107_portable')
+parser.add_argument('--history-verification',default='test_results/history_v107_portable_final')
 parser.add_argument('--sound-verification',default='test_results/sound_v107_portable')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
