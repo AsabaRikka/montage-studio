@@ -12,14 +12,15 @@ root=Path(__file__).resolve().parent.parent
 release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
-parser.add_argument('--version',default='1.0.5')
-parser.add_argument('--verification',default='test_results/portable_v105')
-parser.add_argument('--upgrade-verification',default='test_results/upgrade_v105')
-parser.add_argument('--isolation-verification',default='test_results/screenshot_v105')
-parser.add_argument('--cloud-verification',default='test_results/cloud_v105_portable')
+parser.add_argument('--version',default='1.0.6')
+parser.add_argument('--verification',default='test_results/portable_v106')
+parser.add_argument('--upgrade-verification',default='test_results/upgrade_v106')
+parser.add_argument('--isolation-verification',default='test_results/screenshot_v106')
+parser.add_argument('--cloud-verification',default='test_results/cloud_v106_portable')
 parser.add_argument('--cloud-baseline-version',default='',help='Reuse historical cloud evidence only when cloud modules are unchanged; no current EXE claim.')
-parser.add_argument('--player-verification',default='test_results/player_v105_portable')
-parser.add_argument('--history-verification',default='test_results/history_v105_portable')
+parser.add_argument('--player-verification',default='test_results/player_v106_portable')
+parser.add_argument('--subtitle-verification',default='test_results/subtitle_v106_portable')
+parser.add_argument('--history-verification',default='test_results/history_v106_portable')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -31,6 +32,7 @@ isolation_verification=root/args.isolation_verification
 cloud_verification=root/args.cloud_verification
 player_verification=root/args.player_verification
 history_verification=root/args.history_verification
+subtitle_verification=root/args.subtitle_verification
 
 if args.mode=='prepare':
     app=package/'MontageStudio'
@@ -65,6 +67,10 @@ elif args.mode=='zip':
         history_verification/'历史双击实际解码帧.png':'历史双击实际解码帧.png',
         history_verification/'历史页浅色.png':'历史页浅色.png',
         history_verification/'历史页深色.png':'历史页深色.png',
+        subtitle_verification/'字幕进度条验证.json':'字幕进度条验证.json',
+        subtitle_verification/'字幕进度条浅色.png':'字幕进度条浅色.png',
+        subtitle_verification/'字幕进度条深色.png':'字幕进度条深色.png',
+        subtitle_verification/'修改字幕后实际帧.png':'修改字幕后实际帧.png',
         root/'docs/DELIVERY.md':'交付说明.md',
         verification/'delivery/gui/播放器实际视频帧.png':'实际解码帧.png',
         verification/'delivery/gui/导出完成.png':'便携导出完成.png'}
@@ -100,6 +106,9 @@ elif args.mode=='zip':
     history=json.loads((history_verification/'历史记录验证.json').read_text(encoding='utf-8'))
     if not history.get('passed') or len(history.get('checks',[]))!=5 or any(not c.get('passed') for c in history['checks']) or history.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('History validation does not match the release executable.')
+    subtitle=json.loads((subtitle_verification/'字幕进度条验证.json').read_text(encoding='utf-8'))
+    if not subtitle.get('passed') or len(subtitle.get('checks',[]))!=6 or any(not c.get('passed') for c in subtitle['checks']) or subtitle.get('exe_sha256')!=portable.get('exe_sha256'):
+        raise SystemExit('Subtitle timeline validation does not match the release executable.')
     for src,dst in items.items():shutil.copy2(src,evidence/dst)
     for src,dst in [('docs/使用说明.md','使用说明.md'),('docs/DELIVERY.md','交付说明.md')]:shutil.copy2(root/src,package/dst)
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()

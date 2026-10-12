@@ -13,7 +13,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from .core import Runner, Cancelled, preview_frame
 from .runtime import data_dir
-from .widgets import NoWheelDoubleSpinBox as QDoubleSpinBox
+from .widgets import SeekSlider, NoWheelDoubleSpinBox as QDoubleSpinBox
 
 
 class FrameWorker(QThread):
@@ -87,20 +87,45 @@ class FrameCanvas(QWidget):
                 self.selected.emit(self.region.copy())
 
 
+class FrameTimeSpinBox(QDoubleSpinBox):
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.interpretText()
+            self.editingFinished.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
 class FramePreview(QWidget):
-    def __init__(self, path, settings, parent=None, selectable=False):
+    seekRequested = Signal()
+
+    def __init__(self, path, settings, parent=None, selectable=False, duration=None):
         super().__init__(parent)
         self.path, self.settings = path, copy.deepcopy(settings)
         self.worker = None
         self.last_result = None
         self.request = None
+        self.closed = False
+        self.syncing = False
+        self.duration = 0
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
         self.canvas = FrameCanvas(selectable)
         box.addWidget(self.canvas, 1)
+        self.timeline = SeekSlider(self)
+        self.timeline.setAccessibleName('效果预览时间进度')
+        self.timeline.setRange(0, 0)
+        self.timeline.setEnabled(False)
+        self.timeline.setSingleStep(100)
+        self.timeline.setPageStep(1000)
+        self.timeline.setToolTip('点击或拖动后松手查看对应帧；方向键微调，Home / End 跳到首尾。')
+        box.addWidget(self.timeline)
+        self.time_label = QLabel('0.00 / 0.00 秒')
+        box.addWidget(self.time_label)
         row = QHBoxLayout()
         row.addWidget(QLabel('时间'))
-        self.time = QDoubleSpinBox()
+        self.time = FrameTimeSpinBox()
         self.time.setRange(0, 86400)
         self.time.setDecimals(2)
         self.time.setSingleStep(.1)
@@ -112,18 +137,75 @@ class FramePreview(QWidget):
         self.status = QLabel('修改后点击刷新，查看当前时间的实际处理效果。')
         self.status.setWordWrap(True)
         box.addWidget(self.status)
+        self.timeline.valueChanged.connect(self.seek_changed)
+        self.timeline.sliderReleased.connect(self.seekRequested.emit)
+        self.time.valueChanged.connect(self.time_changed)
+        self.time.editingFinished.connect(self.seekRequested.emit)
+        if duration is not None:
+            self.set_duration(duration)
+
+    def set_duration(self, duration):
+        self.duration = max(0, float(duration))
+        self.syncing = True
+        self.time.setMaximum(max(0, self.duration-.05))
+        self.timeline.setMaximum(round(self.time.maximum()*1000))
+        self.timeline.setValue(round(self.time.value()*1000))
+        self.timeline.setEnabled(self.duration > 0)
+        self.syncing = False
+        self.update_label()
+
+    def update_label(self):
+        self.time_label.setText(f'{self.time.value():.2f} / {self.duration:.2f} 秒')
+
+    def time_changed(self, seconds):
+        if self.syncing:
+            return
+        self.syncing = True
+        self.timeline.setValue(round(seconds*1000))
+        self.syncing = False
+        self.update_label()
+
+    def seek_changed(self, ms):
+        if self.syncing:
+            return
+        self.syncing = True
+        self.time.setValue(ms/1000)
+        self.syncing = False
+        self.update_label()
+        if not self.timeline.isSliderDown():
+            self.seekRequested.emit()
 
     def render(self, settings=None, segments=None, source_size=False):
-        if self.worker and self.worker.isRunning():
+        if self.closed:
             return
+        # Keep the newest time and current edits even when FFmpeg is still busy.
+        self.request = (copy.deepcopy(settings if settings is not None else self.settings),
+                        self.time.value(), copy.deepcopy(segments), source_size)
         self.status.setText('正在生成预览…')
+        if self.worker is not None:
+            return
+        self.start_request()
+
+    def start_request(self):
+        settings, seconds, segments, source_size = self.request
+        self.request = None
         self.refresh.setEnabled(False)
-        self.worker = FrameWorker(self.path, settings or self.settings, self.time.value(), segments, source_size, self)
+        self.worker = FrameWorker(self.path, settings, seconds, segments, source_size, self)
         self.worker.ready.connect(self.ready)
         self.worker.start()
 
     def ready(self, result):
         self.worker.wait()
+        seconds = self.worker.args[2]
+        self.worker.deleteLater()
+        self.worker = None
+        if self.closed or self.request is not None:
+            if 'path' in result:
+                Path(result['path']).unlink(missing_ok=True)
+            if not self.closed:
+                self.start_request()
+            return
+        result['seconds'] = seconds
         self.last_result = result
         self.refresh.setEnabled(True)
         if 'error' in result:
@@ -132,10 +214,12 @@ class FramePreview(QWidget):
         self.canvas.pixmap = QPixmap(result['path'])
         Path(result['path']).unlink(missing_ok=True)
         self.canvas.update()
-        self.time.setMaximum(max(0, result['duration']-.05))
-        self.status.setText('当前帧预览已更新。修改后请再次刷新。')
+        self.set_duration(result['duration'])
+        self.status.setText(f'已显示 {seconds:.2f} 秒的效果帧。修改字幕或设置后可点击刷新。')
 
     def stop(self):
+        self.closed = True
+        self.request = None
         if self.worker:
             self.worker.stop.set()
             self.worker.wait()
@@ -218,6 +302,7 @@ class WatermarkDialog(QDialog):
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)
         self.preview.refresh.clicked.connect(self.render)
+        self.preview.seekRequested.connect(self.render)
         self.original()
 
     def set_region(self, region):
