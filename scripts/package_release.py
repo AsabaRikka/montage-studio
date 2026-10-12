@@ -12,12 +12,13 @@ root=Path(__file__).resolve().parent.parent
 release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
-parser.add_argument('--version',default='1.0.4')
-parser.add_argument('--verification',default='test_results/portable_v104')
-parser.add_argument('--upgrade-verification',default='test_results/upgrade_v104')
-parser.add_argument('--isolation-verification',default='test_results/screenshot_v104')
-parser.add_argument('--cloud-verification',default='test_results/cloud_v104_portable')
-parser.add_argument('--player-verification',default='test_results/player_v104_portable')
+parser.add_argument('--version',default='1.0.5')
+parser.add_argument('--verification',default='test_results/portable_v105')
+parser.add_argument('--upgrade-verification',default='test_results/upgrade_v105')
+parser.add_argument('--isolation-verification',default='test_results/screenshot_v105')
+parser.add_argument('--cloud-verification',default='test_results/cloud_v105_portable')
+parser.add_argument('--player-verification',default='test_results/player_v105_portable')
+parser.add_argument('--history-verification',default='test_results/history_v105_portable')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -28,6 +29,7 @@ upgrade_verification=root/args.upgrade_verification
 isolation_verification=root/args.isolation_verification
 cloud_verification=root/args.cloud_verification
 player_verification=root/args.player_verification
+history_verification=root/args.history_verification
 
 if args.mode=='prepare':
     app=package/'MontageStudio'
@@ -58,6 +60,10 @@ elif args.mode=='zip':
         player_verification/'浅色进度条.png':'播放器浅色进度条.png',
         player_verification/'深色进度条.png':'播放器深色进度条.png',
         player_verification/'实际解码帧.png':'播放器实际解码帧.png',
+        history_verification/'历史记录验证.json':'历史记录验证.json',
+        history_verification/'历史双击实际解码帧.png':'历史双击实际解码帧.png',
+        history_verification/'历史页浅色.png':'历史页浅色.png',
+        history_verification/'历史页深色.png':'历史页深色.png',
         root/'docs/DELIVERY.md':'交付说明.md',
         verification/'delivery/gui/播放器实际视频帧.png':'实际解码帧.png',
         verification/'delivery/gui/导出完成.png':'便携导出完成.png'}
@@ -82,6 +88,9 @@ elif args.mode=='zip':
         raise SystemExit('Player validation does not match the release executable.')
     if (package/'MontageStudio/data').exists():
         raise SystemExit('Distribution contains user data; do not include it in the release.')
+    history=json.loads((history_verification/'历史记录验证.json').read_text(encoding='utf-8'))
+    if not history.get('passed') or len(history.get('checks',[]))!=5 or any(not c.get('passed') for c in history['checks']) or history.get('exe_sha256')!=portable.get('exe_sha256'):
+        raise SystemExit('History validation does not match the release executable.')
     for src,dst in items.items():shutil.copy2(src,evidence/dst)
     for src,dst in [('docs/使用说明.md','使用说明.md'),('docs/DELIVERY.md','交付说明.md')]:shutil.copy2(root/src,package/dst)
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()

@@ -404,9 +404,12 @@ class MainWindow(QMainWindow):
     def history_tab(self):
         page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
         self.history_summary=QLabel();l.addWidget(self.history_summary);self.history_table=table(['游戏','前贴身份','主视频身份','完成时间','输出位置']);l.addWidget(self.history_table,1)
-        row=QHBoxLayout();row.addWidget(button('刷新历史',self.refresh_history));row.addWidget(button('备份任务与历史',self.backup));row.addWidget(button('恢复备份',self.restore));row.addStretch();l.addLayout(row)
+        row=QHBoxLayout();row.addWidget(button('刷新历史',self.refresh_history));self.delete_history_button=button('删除选中记录',self.delete_selected_history);row.addWidget(self.delete_history_button);row.addWidget(button('备份任务与历史',self.backup));row.addWidget(button('恢复备份',self.restore));row.addStretch();l.addLayout(row)
         row=QHBoxLayout();row.addWidget(button('导出历史 CSV',self.export_history));row.addWidget(button('清理媒体缓存',self.clear_cache));row.addStretch();l.addLayout(row)
-        note=QLabel('历史仅在本机保存，成功成片才记入历史。删除成片不会清除配对。完整备份包含任务与配方，不包含源视频。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
+        note=QLabel('历史仅在本机保存，成功成片才记入历史。双击记录可预览成片；删除历史记录会释放该配对，输出文件和源视频保留。完整备份包含任务与配方，不包含源视频。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
+        self.history_table.cellDoubleClicked.connect(self.preview_history)
+        self.history_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.history_table.setToolTip('双击任意列预览成片；Ctrl / Shift 可选择多条记录。')
         self.tabs.addTab(page,'⑤ 本机历史');self.refresh_history()
     def settings(self):
         s=dict(SETTINGS)
@@ -735,7 +738,38 @@ class MainWindow(QMainWindow):
             self.store.abandon(self.bid);self.load_batch();self.refresh_batches()
     def refresh_history(self):
         rows=self.store.history();self.history_summary.setText(f'本机成功配对 {len(rows)} 条 · 数据目录：{data_dir()}');self.history_table.setRowCount(len(rows))
-        for n,(game,a,b,completed,output) in enumerate(rows):cells(self.history_table,n,[game,a[:12],b[:12],time.strftime('%Y-%m-%d %H:%M',time.localtime(completed)),output])
+        for n,(game,a,b,completed,output) in enumerate(rows):
+            cells(self.history_table,n,[game,a[:12],b[:12],time.strftime('%Y-%m-%d %H:%M',time.localtime(completed)),output])
+            self.history_table.item(n,0).setData(Qt.ItemDataRole.UserRole,(game,a,b,output))
+    def preview_history(self,row,column=0):
+        item=self.history_table.item(row,0)
+        record=item.data(Qt.ItemDataRole.UserRole) if item else None
+        output=record[3] if record else ''
+        if not output or not Path(output).is_file():
+            self.notify_error('历史记录对应的成片文件不存在，无法预览：'+str(output or '（空路径）'))
+            return
+        Player(output,self).exec()
+    def delete_selected_history(self):
+        if self.busy():
+            self.notify_error('当前正在处理，请先暂停或等待结束。')
+            return
+        rows=sorted({index.row() for index in self.history_table.selectionModel().selectedRows()})
+        if not rows:
+            self.notify_error('请先选中要删除的历史记录。')
+            return
+        records=[]
+        for row in rows:
+            item=self.history_table.item(row,0)
+            record=item.data(Qt.ItemDataRole.UserRole) if item else None
+            if record:records.append(record[:3])
+        if not records:return
+        if QMessageBox.question(self,'删除历史记录',f'确定删除选中的 {len(records)} 条历史记录吗？\n只删除本机历史索引，不删除输出文件和源素材；删除后配对可以重新生成。')!=QMessageBox.StandardButton.Yes:
+            return
+        try:
+            deleted=self.store.delete_histories(records)
+            self.refresh_history()
+            self.footer.setText(f'已删除 {deleted} 条历史记录；输出文件和源素材保留。请重新生成计划并创建新任务。')
+        except Exception as exc:self.notify_error(exc)
     def backup(self):
         if self.busy():return
         p,_=QFileDialog.getSaveFileName(self,'备份任务与历史','混剪历史.sqlite3','数据库 (*.sqlite3)')

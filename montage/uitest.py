@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from PySide6.QtCore import Qt, QPoint, QPointF, QTimer
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QAbstractSpinBox, QCheckBox, QDialogButtonBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QComboBox, QAbstractSpinBox, QCheckBox, QDialogButtonBox, QScrollArea, QMessageBox
 from PySide6.QtTest import QTest
 from .runtime import write_json
 
@@ -29,6 +29,36 @@ def verify(folder):
     try:
         window.assets={'a':scan([a,b,silent],'a')['assets'],'b':scan([b,silent],'b')['assets'],'music':scan([music],'music')['assets']}
         window.overrides={};window.refresh_assets();QTest.qWait(100)
+        def history_preview_and_delete():
+            import montage.gui as gui
+            from montage.store import Store
+            a_key=window.assets['a'][0]['id'];b_key=window.assets['b'][0]['id'];output=folder/'历史预览成片.mp4'
+            output.write_bytes(a.read_bytes())
+            bid=window.store.create('历史验证', {a_key:window.assets['a'][0],b_key:window.assets['b'][0]}, [(a_key,b_key)], {}, [{}])
+            window.store.update(bid,1,'complete',str(output))
+            window.refresh_history();assert window.history_table.rowCount()==1
+            opened=[]
+            class FakePlayer:
+                def __init__(self,path,parent=None):opened.append(str(path))
+                def exec(self):return 0
+            old_player=gui.Player;old_question=QMessageBox.question
+            try:
+                gui.Player=FakePlayer
+                window.history_table.cellDoubleClicked.emit(0,0)
+                assert opened==[str(output)]
+                window.history_table.selectRow(0)
+                QMessageBox.question=lambda *args,**kwargs:QMessageBox.StandardButton.Yes
+                window.delete_selected_history()
+            finally:
+                gui.Player=old_player;QMessageBox.question=old_question
+            assert window.store.history()==[]
+            assert window.store.excluded('历史验证')==set()
+            assert output.is_file()
+            replacement=window.store.create('历史验证', {a_key:window.assets['a'][0],b_key:window.assets['b'][0]}, [(a_key,b_key)], {}, [{}])
+            assert replacement and output.is_file()
+            window.store.abandon(replacement);window.refresh_history()
+            return dict(double_click_preview=True,deleted=1,pair_released=True,output_preserved=True,recreated=True)
+        check('历史双击预览_删除释放配对',history_preview_and_delete)
         def thumbnails():
             keys={x['id'] for role in ('a','b') for x in window.assets[role]}
             wait(lambda:keys <= window.thumbnail_icons.keys())

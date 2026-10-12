@@ -46,6 +46,11 @@ def main():
             os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
             from montage.playertest import verify
             return verify(Path(sys.argv[2]))
+        if mode=='--history-test':
+            import os
+            os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
+            from montage.historytest import verify
+            return verify(Path(sys.argv[2]))
         if mode in ('--delivery-test','--stress-test'):
             import os
             os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))

@@ -119,6 +119,15 @@ class Store:
     def history(self, game=''):
         return list(self.db.execute('SELECT game,a,b,completed,output FROM history WHERE (?="" OR game=?) ORDER BY completed DESC', (game, game)))
 
+    def delete_history(self, game, a, b):
+        """Remove one history index entry while preserving its output and task."""
+        return self.delete_histories([(game,a,b)])
+
+    def delete_histories(self, records):
+        """Delete selected keys atomically; never alter reservations or jobs."""
+        with self.db:
+            return sum(self.db.execute('DELETE FROM history WHERE game=? AND a=? AND b=?', record).rowcount for record in set(records))
+
     def relocate(self, bid, key, path):
         if identity(path) != key:
             raise ValueError('替换文件内容不同，请选回原素材。')

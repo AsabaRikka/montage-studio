@@ -74,3 +74,20 @@ def test_identity(tmp_path):
     assert identity(q)==h
     q.write_bytes(b'other')
     assert identity(q)!=h
+
+
+def test_delete_history_releases_pair_and_keeps_output(tmp_path):
+    s=Store(tmp_path/'db')
+    assets={'a':dict(path='a'), 'b':dict(path='b')}
+    bid=s.create('game',assets,[('a','b')],{},[{}])
+    output=tmp_path/'result.mp4';output.write_bytes(b'output')
+    s.update(bid,1,'complete',str(output))
+    assert s.excluded('game')=={('a','b')}
+    assert s.delete_history('game','a','b')==1
+    assert s.history()==[]
+    assert s.excluded('game')==set()
+    assert output.read_bytes()==b'output'
+    replacement=s.create('game',assets,[('a','b')],{},[{}])
+    assert replacement != bid
+    assert s.delete_history('game','missing','pair')==0
+    s.close()
