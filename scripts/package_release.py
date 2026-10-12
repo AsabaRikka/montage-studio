@@ -14,12 +14,14 @@ parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
 parser.add_argument('--version',default='1.0.2')
 parser.add_argument('--verification',default='test_results/portable_v102')
+parser.add_argument('--upgrade-verification',default='test_results/upgrade_v102_final')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
 if args.version != __version__:raise SystemExit('Release version must match source version.')
 package=release/('混剪工坊_'+args.version)
 verification=root/args.verification
+upgrade_verification=root/args.upgrade_verification
 
 if args.mode=='prepare':
     app=package/'MontageStudio'
@@ -43,6 +45,8 @@ elif args.mode=='zip':
         verification/'selftest/自检报告.json':'便携媒体自检.json',
         verification/'delivery/扩展报告.json':'便携扩展验证.json',
         verification/'ui/界面改进验证.json':'界面改进验证.json',
+        upgrade_verification/'升级与图标验证.json':'升级与图标验证.json',
+        root/'test_results/screenshot_v102_final/截图隔离验证.json':'截图隔离验证.json',
         root/'docs/DELIVERY.md':'交付说明.md',
         verification/'delivery/gui/播放器实际视频帧.png':'实际解码帧.png',
         verification/'delivery/gui/导出完成.png':'便携导出完成.png'}
@@ -53,6 +57,12 @@ elif args.mode=='zip':
         raise SystemExit('Portable validation must finish successfully before packaging.')
     if hashlib.sha256((package/'MontageStudio/MontageStudio.exe').read_bytes()).hexdigest()!=portable.get('exe_sha256'):
         raise SystemExit('Portable validation does not match the release executable.')
+    upgrade=json.loads((upgrade_verification/'升级与图标验证.json').read_text(encoding='utf-8'))
+    if not upgrade.get('passed') or upgrade.get('exe_sha256')!=portable.get('exe_sha256'):
+        raise SystemExit('Upgrade/icon validation does not match the release executable.')
+    isolation=json.loads((root/'test_results/screenshot_v102_final/截图隔离验证.json').read_text(encoding='utf-8'))
+    if not isolation.get('passed') or isolation.get('exe_sha256')!=portable.get('exe_sha256'):
+        raise SystemExit('Screenshot isolation validation does not match the release executable.')
     if (package/'MontageStudio/data').exists():
         raise SystemExit('Distribution contains user data; do not include it in the release.')
     for src,dst in items.items():shutil.copy2(src,evidence/dst)

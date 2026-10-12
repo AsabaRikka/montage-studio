@@ -5,6 +5,10 @@ from pathlib import Path
 
 def main():
     multiprocessing.freeze_support()
+    if '--screenshot' in sys.argv:
+        import os
+        target = Path(sys.argv[sys.argv.index('--screenshot') + 1]).resolve()
+        os.environ.setdefault('MONTAGE_DATA_DIR', str(target.parent / (target.stem + '_diagnostic_data')))
     if len(sys.argv)>1:
         mode=sys.argv[1]
         if mode=='--transcribe':
