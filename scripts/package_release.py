@@ -13,7 +13,7 @@ release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
 parser.add_argument('--version',default='1.0.2')
-parser.add_argument('--verification',default='test_results/portable_v102')
+parser.add_argument('--verification',default='test_results/portable_v102_final')
 parser.add_argument('--upgrade-verification',default='test_results/upgrade_v102_final')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
@@ -75,7 +75,7 @@ elif args.mode=='zip':
             if p.is_file():z.write(p,p.relative_to(release))
     source_zip=release/('混剪工坊_'+args.version+'_源码.zip')
     subprocess.run(['git','archive','--format=zip','--prefix=混剪工坊源码/','-o',str(source_zip),'HEAD'],cwd=root,check=True)
-    report={'git':revision,'archives':[]}
+    report={'version':args.version,'git':revision,'exe_sha256':portable['exe_sha256'],'user_data_included':False,'archives':[]}
     for p in [binary_zip,source_zip]:
         with zipfile.ZipFile(p) as z:
             bad=z.testzip()
