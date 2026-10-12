@@ -17,6 +17,7 @@ parser.add_argument('--verification',default='test_results/portable_v105')
 parser.add_argument('--upgrade-verification',default='test_results/upgrade_v105')
 parser.add_argument('--isolation-verification',default='test_results/screenshot_v105')
 parser.add_argument('--cloud-verification',default='test_results/cloud_v105_portable')
+parser.add_argument('--cloud-baseline-version',default='',help='Reuse historical cloud evidence only when cloud modules are unchanged; no current EXE claim.')
 parser.add_argument('--player-verification',default='test_results/player_v105_portable')
 parser.add_argument('--history-verification',default='test_results/history_v105_portable')
 args=parser.parse_args()
@@ -55,7 +56,7 @@ elif args.mode=='zip':
         verification/'ui/界面改进验证.json':'界面改进验证.json',
         upgrade_verification/'升级与图标验证.json':'升级与图标验证.json',
         isolation_verification/'截图隔离验证.json':'截图隔离验证.json',
-        cloud_verification/'云端库验证.json':'云端库验证.json',
+        cloud_verification/'云端库验证.json':('历史基线_'+args.cloud_baseline_version+'_云端库验证.json' if args.cloud_baseline_version else '云端库验证.json'),
         player_verification/'播放器验证.json':'播放器验证.json',
         player_verification/'浅色进度条.png':'播放器浅色进度条.png',
         player_verification/'深色进度条.png':'播放器深色进度条.png',
@@ -81,7 +82,15 @@ elif args.mode=='zip':
     if not isolation.get('passed') or isolation.get('exe_sha256')!=portable.get('exe_sha256'):
         raise SystemExit('Screenshot isolation validation does not match the release executable.')
     cloud=json.loads((cloud_verification/'云端库验证.json').read_text(encoding='utf-8'))
-    if not cloud.get('passed') or len(cloud.get('checks',[]))!=5 or any(not c.get('passed') for c in cloud['checks']) or cloud.get('exe_sha256')!=portable.get('exe_sha256'):
+    cloud_hash=portable['exe_sha256']
+    if args.cloud_baseline_version:
+        baseline=json.loads((release/('交付包校验_'+args.cloud_baseline_version+'.json')).read_text(encoding='utf-8'))
+        cloud_hash=baseline['exe_sha256']
+        for path in ('montage/cloud.py','montage/cloud_ui.py','montage/media.py','montage/service.py','montage/runtime.py','montage/thumbnails.py','MontageStudio.spec'):
+            previous=subprocess.check_output(['git','show','v'+args.cloud_baseline_version+':'+path],cwd=root)
+            if previous.replace(b'\r\n',b'\n')!=(root/path).read_bytes().replace(b'\r\n',b'\n'):
+                raise SystemExit('Cloud baseline cannot be reused after module changes: '+path)
+    if not cloud.get('passed') or len(cloud.get('checks',[]))!=5 or any(not c.get('passed') for c in cloud['checks']) or cloud.get('exe_sha256')!=cloud_hash:
         raise SystemExit('Cloud validation does not match the release executable.')
     player=json.loads((player_verification/'播放器验证.json').read_text(encoding='utf-8'))
     if not player.get('passed') or len(player.get('checks',[]))!=5 or any(not c.get('passed') for c in player['checks']) or player.get('exe_sha256')!=portable.get('exe_sha256'):
@@ -102,6 +111,7 @@ elif args.mode=='zip':
     source_zip=release/('混剪工坊_'+args.version+'_源码.zip')
     subprocess.run(['git','archive','--format=zip','--prefix=混剪工坊源码/','-o',str(source_zip),'HEAD'],cwd=root,check=True)
     report={'version':args.version,'git':revision,'exe_sha256':portable['exe_sha256'],'user_data_included':False,'archives':[]}
+    report['cloud_verification']={'baseline_version':args.cloud_baseline_version or None,'exe_sha256':cloud_hash,'current_exe_retested':not bool(args.cloud_baseline_version)}
     for p in [binary_zip,source_zip]:
         with zipfile.ZipFile(p) as z:
             bad=z.testzip()

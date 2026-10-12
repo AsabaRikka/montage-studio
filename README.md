@@ -9,10 +9,13 @@ python -m pytest -q
 python main.py --self-test test_results/new_selftest
 python -m PyInstaller --noconfirm MontageStudio.spec
 python scripts/package_release.py prepare
-python scripts/verify_portable.py release/混剪工坊_1.0.1/MontageStudio/MontageStudio.exe test_results/portable_v101
+python scripts/verify_portable.py release/混剪工坊_1.0.5/MontageStudio/MontageStudio.exe test_results/portable_v105
+release/混剪工坊_1.0.5/MontageStudio/MontageStudio.exe --history-test test_results/history_v105_portable
 python scripts/package_release.py zip
 ```
 
 扩展验证需先在目标目录的“演示素材”中复制发布示例；压力测试使用新的空目录。测试产物不写入Git。发布包附有独立证据摘要和完整文件夹，不能只复制EXE。
+
+ZIP还要求最终EXE的播放器、升级、截图隔离和历史五组验证与相同SHA256匹配，详见发布脚本参数。若云端及媒体模块未改，可显式使用历史云端基线（--cloud-baseline-version），门禁检查源文件相同及旧EXE证据，校验记录会注明当前EXE未重跑云端。历史诊断只用独立合成素材；勿将真实用户data设为任何诊断的数据目录。
 
 GPL-3.0。第三方许可及来源见LICENSE、docs/THIRD_PARTY.md及发布包内许可原文。
