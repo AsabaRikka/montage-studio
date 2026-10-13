@@ -194,13 +194,14 @@ def verify(folder):
             QTest.mouseClick(w.viewport(),Qt.MouseButton.LeftButton,pos=w.visualItemRect(w.item(499)).topLeft()+QPoint(26,26))
             assert w.item(499).isSelected();window.grab().save(str(folder/'500项网格.png'))
             sizes=[]
-            for width,height in [(1040,720),(1280,880)]:
+            available=window.screen().availableGeometry().height()-window.frameGeometry().height()+window.height()
+            for width,height in [(1040,720),(1280,min(880,available))]:
                 window.resize(width,height);w.scrollToTop();QTest.qWait(100)
                 first=w.visualItemRect(w.item(0));second=w.visualItemRect(w.item(1))
                 assert first.top()==second.top() and first.left()!=second.left()
                 assert w.horizontalScrollBar().maximum()==0
                 sizes.append(dict(requested=[width,height],actual=[window.width(),window.height()],columns=w.viewport().width()//w.gridSize().width()))
-                assert window.width()==width and window.height()==height,'窗口最小宽度被内部控件撑大'
+                assert window.width()==width and window.height()==height,f'窗口被内部控件撑大：请求{width}×{height}，实际{window.width()}×{window.height()}'
                 window.grab().save(str(folder/f'网格_{width}.png'))
             window.assets=saved;window.refresh_assets();window.material_tabs.setCurrentIndex(2);QTest.qWait(80)
             w=window.lists['music'];QTest.mouseClick(w.viewport(),Qt.MouseButton.LeftButton,pos=w.visualItemRect(w.item(0)).topLeft()+QPoint(26,26))
