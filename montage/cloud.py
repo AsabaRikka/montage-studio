@@ -196,7 +196,9 @@ class CloudLibrary:
 
     def sync(self, items, stop=None, notify=lambda _: None):
         cli = None; public = None; target = self.library['target']
-        mode = self.library.get('access_mode', 'account')
+        # Current user choice governs authentication even for a migrated catalog.
+        # Old catalogs must never silently invoke a logged-in CLI in public mode.
+        mode = self.config.get('access_mode', 'public')
         source_url = self.library.get('source_url', self.config['url'])
         assets = []; errors = []; downloaded = 0; reused = 0; cancelled = False
         for index, item in enumerate(items, 1):

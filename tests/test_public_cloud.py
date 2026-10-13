@@ -61,6 +61,22 @@ def test_old_config_defaults_public_without_deleting_cache(tmp_path):
     assert lib.config['access_mode']=='public' and lib.config['profile']=='old'
 
 
+def test_migrated_account_catalog_never_uses_cli_in_public_mode(tmp_path,monkeypatch):
+    import montage.public_cloud as public
+    lib=CloudLibrary(tmp_path)
+    item=dict(key='k',name='a',filename='a.mp4',record_id='r',file_token='f',size=1)
+    lib.library=dict(access_mode='account',target={},items=[item],cache={},source_url=DEFAULT_URL)
+    calls=[]
+    class Client:
+        def __init__(self,*args):pass
+        def download(self,*args):
+            calls.append(True)
+            raise PublicAccessError('公开下载限制')
+    monkeypatch.setattr(public,'PublicFeishu',Client)
+    monkeypatch.setattr(lib,'cli',lambda:pytest.fail('old catalog invoked CLI'))
+    result=lib.sync([item]);assert calls==[True] and result['errors'] and result['downloaded']==0
+
+
 def test_public_sync_failure_cancel_cleanup_and_completed_reuse(tmp_path,monkeypatch):
     import montage.public_cloud as public
     import montage.cloud as cloud
