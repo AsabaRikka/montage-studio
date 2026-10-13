@@ -22,6 +22,7 @@ parser.add_argument('--player-verification',default='test_results/player_v108_po
 parser.add_argument('--subtitle-verification',default='test_results/subtitle_v108_portable_final')
 parser.add_argument('--history-verification',default='test_results/history_v108_portable_final')
 parser.add_argument('--sound-verification',default='test_results/sound_v108_portable_final')
+parser.add_argument('--quick-verification',default='',help='Package a focused current-version verification instead of the full historical release gate.')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -51,6 +52,45 @@ if args.mode=='prepare':
 elif args.mode=='zip':
     evidence=package/'验证记录'
     evidence.mkdir(parents=True,exist_ok=True)
+    if args.quick_verification:
+        quick_dir=root/args.quick_verification
+        quick_path=quick_dir/'quick_verification.json'
+        if not quick_path.exists():
+            raise SystemExit('Quick verification report is missing: '+str(quick_path))
+        quick=json.loads(quick_path.read_text(encoding='utf-8'))
+        exe_path=package/'MontageStudio/MontageStudio.exe'
+        exe_hash=hashlib.sha256(exe_path.read_bytes()).hexdigest()
+        if not quick.get('passed') or quick.get('exe_sha256')!=exe_hash:
+            raise SystemExit('Quick verification does not match the release executable.')
+        if (package/'MontageStudio/data').exists():
+            raise SystemExit('Distribution contains user data; do not include it in the release.')
+        shutil.copy2(quick_path,evidence/'1.0.9快速验证.json')
+        for source in sorted(quick_dir.glob('*.png')):
+            shutil.copy2(source,evidence/source.name)
+        for src,dst in [('docs/使用说明.md','使用说明.md'),('docs/DELIVERY.md','交付说明.md')]:shutil.copy2(root/src,package/dst)
+        revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+        (package/'版本.txt').write_text(args.version+'\nGit: '+revision+'\nWindows x64; Python 3.14.4 / PySide6 6.11.0\n',encoding='utf-8-sig')
+        binary_zip=release/('混剪工坊_'+args.version+'_完整便携版.zip')
+        with zipfile.ZipFile(binary_zip,'w',zipfile.ZIP_DEFLATED,compresslevel=4) as z:
+            for p in sorted(package.rglob('*')):
+                if p.is_file():z.write(p,p.relative_to(release))
+        source_zip=release/('混剪工坊_'+args.version+'_源码.zip')
+        subprocess.run(['git','archive','--format=zip','--prefix=混剪工坊源码/','-o',str(source_zip),'HEAD'],cwd=root,check=True)
+        report={'version':args.version,'git':revision,'exe_sha256':exe_hash,'user_data_included':False,
+                'verification_mode':'focused_current_change','quick_verification':str(quick_path.relative_to(root)),
+                'historical_baseline':'1.0.8 release evidence retained separately; not relabeled as current EXE evidence','archives':[]}
+        for p in [binary_zip,source_zip]:
+            with zipfile.ZipFile(p) as z:
+                bad=z.testzip()
+                if bad:raise RuntimeError('CRC failed: '+bad)
+                files=len(z.infolist())
+            h=hashlib.sha256()
+            with p.open('rb') as f:
+                while block:=f.read(8*1024*1024):h.update(block)
+            report['archives'].append(dict(file=p.name,bytes=p.stat().st_size,files=files,crc_passed=True,sha256=h.hexdigest()))
+        (release/('交付包校验_'+args.version+'.json')).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+        print(json.dumps(report,ensure_ascii=False,indent=2))
+        raise SystemExit(0)
     items={root/'test_results/source_selftest/自检报告.json':'1.0.0基线_源码媒体自检.json',
         root/'test_results/source_delivery/扩展报告.json':'1.0.0基线_源码扩展验证.json',
         root/'test_results/stress/1000条报告.json':'1.0.0基线_1000条短片压力验证.json',

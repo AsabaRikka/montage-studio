@@ -11,6 +11,11 @@ def main():
         os.environ.setdefault('MONTAGE_DATA_DIR', str(target.parent / (target.stem + '_diagnostic_data')))
     if len(sys.argv)>1:
         mode=sys.argv[1]
+        if mode=='--quick-test':
+            import os
+            os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
+            from montage.quicktest import verify
+            return verify(Path(sys.argv[2]))
         if mode=='--transcribe':
             from montage.subtitles import transcribe
             transcribe(Path(sys.argv[2]),Path(sys.argv[3]),Path(sys.argv[4]),sys.argv[5],sys.argv[6])

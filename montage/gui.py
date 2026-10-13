@@ -22,6 +22,7 @@ from .runtime import data_dir,write_json
 from .service import SETTINGS,scan,run_batch,api_rules,job_output,write_report
 from .store import Store,identity
 from .planner import make_plan,parse_instruction,PlanError
+from .workflow import available_count, cache_sizes, clear_processing_cache, human_size, MAX_BATCH
 from .media import MediaEngine
 from .core import Cancelled
 from .subtitles import read_srt,write_srt,align_script
@@ -362,6 +363,8 @@ class MainWindow(QMainWindow):
         descriptions=['导入前贴、主视频与音乐，勾选后批量管理。','设置整批画面、声音与字幕，前贴可单独覆盖。','先检查配对与使用次数，再固定任务导出。','已完成成片保留，暂停后可继续。','配对历史只保存在本机，换音乐不算新配对。']
         self.page_title.setText(titles[index]);self.page_description.setText(descriptions[index])
         for n,b in enumerate(self.nav_buttons):b.setChecked(n==index)
+        if index==4:self.refresh_cache_size()
+        if index==0:self.update_quick_summary()
     def toggle_theme(self):self.set_theme(not self.dark)
     def set_theme(self,dark,save=True):
         self.dark=bool(dark);apply_theme(QApplication.instance(),self.dark);t=tokens(self.dark)
@@ -412,6 +415,14 @@ class MainWindow(QMainWindow):
             self.material_tabs.addTab(panel,title+' (0)')
         from .cloud_ui import CloudPanel
         self.cloud_panel=CloudPanel(self);self.material_tabs.addTab(self.cloud_panel,'云端前贴')
+        quick=QGroupBox('一键拼接');ql=QVBoxLayout(quick)
+        row=QHBoxLayout();self.quick_mode=combo([('最大可用数量','max'),('指定数量','count')]);row.addWidget(self.quick_mode)
+        self.quick_quantity=spin(1,MAX_BATCH,1000);self.quick_quantity.setEnabled(False);row.addWidget(self.quick_quantity)
+        self.quick_button=button('一键拼接并导出',self.quick_export,True);row.addWidget(self.quick_button);row.addStretch();ql.addLayout(row)
+        self.quick_summary=QLabel('请勾选 A 前贴和 B 主视频。');self.quick_summary.setWordWrap(True);ql.addWidget(self.quick_summary)
+        self.quick_output=QLabel();self.quick_output.setWordWrap(True);row=QHBoxLayout();row.addWidget(self.quick_output,1);row.addWidget(button('更改保存位置',self.pick_output));ql.addLayout(row)
+        note=QLabel('默认：竖屏720p · 硬切 · A/B保留原声 · 随机不重复。换音乐、字幕或指定次数请用下方高级流程。');note.setWordWrap(True);note.setProperty('muted',True);ql.addWidget(note)
+        self.quick_mode.currentIndexChanged.connect(self.update_quick_summary);self.game.textChanged.connect(self.update_quick_summary);l.addWidget(quick)
         row=QHBoxLayout();note=QLabel('直接勾选即可多选，双击播放。主视频默认保留原声。');note.setProperty('muted',True);row.addWidget(note);row.addStretch();row.addWidget(button('下一步：画面与声音',lambda:self.tabs.setCurrentIndex(1),True));l.addLayout(row)
         self.tabs.addTab(page,'① 素材')
     def settings_tab(self):
@@ -463,7 +474,8 @@ class MainWindow(QMainWindow):
         page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(16,16,16,16)
         self.history_summary=QLabel();l.addWidget(self.history_summary);self.history_table=table(['游戏','前贴身份','主视频身份','完成时间','输出位置']);l.addWidget(self.history_table,1)
         row=QHBoxLayout();row.addWidget(button('刷新历史',self.refresh_history));self.delete_history_button=button('删除选中记录',self.delete_selected_history);row.addWidget(self.delete_history_button);row.addWidget(button('备份任务与历史',self.backup));row.addWidget(button('恢复备份',self.restore));row.addStretch();l.addLayout(row)
-        row=QHBoxLayout();row.addWidget(button('导出历史 CSV',self.export_history));row.addWidget(button('清理媒体缓存',self.clear_cache));row.addStretch();l.addLayout(row)
+        self.cache_size_label=QLabel('点击刷新查看缓存大小');self.cache_size_label.setWordWrap(True);l.addWidget(self.cache_size_label)
+        row=QHBoxLayout();row.addWidget(button('导出历史 CSV',self.export_history));row.addWidget(button('刷新缓存大小',self.refresh_cache_size));self.cache_button=button('清理处理缓存',self.clear_cache);row.addWidget(self.cache_button);row.addStretch();l.addLayout(row)
         note=QLabel('历史仅在本机保存，成功成片才记入历史。双击记录可预览成片；删除历史记录会释放该配对，输出文件和源视频保留。完整备份包含任务与配方，不包含源视频。');note.setWordWrap(True);note.setProperty('muted',True);l.addWidget(note)
         self.history_table.cellDoubleClicked.connect(self.preview_history)
         self.history_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -480,6 +492,7 @@ class MainWindow(QMainWindow):
         for key in ['transition_duration','crf','font_size','margin','outline']:getattr(self,key).setValue(s.get(key,SETTINGS[key]))
         self.subtitles.setChecked(s.get('subtitles',False));self.vocabulary.setText(s.get('vocabulary',''));self.font_color.setText(s.get('font_color','#FFFFFF'));self.output.setText(s.get('output') or str(Path.home()/'Videos'/'混剪成片'))
         self.a_sound.load(s);self.b_sound.load(s)
+        self.update_quick_summary()
     def save_session(self):
         write_json(data_dir()/'session.json',dict(assets=self.assets,overrides=self.overrides,settings=self.settings(),game=self.game.text(),quantity=self.quantity.value(),mode=self.mode.currentData(),seed=self.seed.value(),api=self.api_config,ui_theme='dark' if self.dark else 'light'))
     def load_session(self):
@@ -524,6 +537,32 @@ class MainWindow(QMainWindow):
         self.counts[role].setText(f'{len(self.assets[role])} 条素材 · 已选 {len(self.lists[role].selectedItems())} 条')
         i={'a':0,'b':1,'music':2}[role]
         if i<self.material_tabs.count():self.material_tabs.setTabText(i,{'a':'A 前贴','b':'B 主视频','music':'音乐库'}[role]+f' ({len(self.assets[role])})')
+        self.update_quick_summary()
+    def quick_ids(self,role):
+        return [i.data(Qt.ItemDataRole.UserRole) for i in self.lists[role].selectedItems()]
+    def update_quick_summary(self,*args):
+        if not hasattr(self,'quick_summary') or not hasattr(self,'output'):return
+        a,b=self.quick_ids('a'),self.quick_ids('b');n=available_count(a,b,self.store.excluded(self.game.text().strip()))
+        self.quick_quantity.setEnabled(self.quick_mode.currentData()=='count')
+        self.quick_summary.setText(f'已选 A {len(a)} 条 × B {len(b)} 条 · 扣除历史及任务占用后最多 {n} 条'+('（单任务上限100000，请使用指定数量分批）' if n>MAX_BATCH else ''))
+        self.quick_output.setText('保存到：'+self.output.text())
+    def quick_export(self):
+        if self.busy():self.notify_error('正在处理，请先暂停或等待完成。');return
+        try:
+            a,b=self.quick_ids('a'),self.quick_ids('b');game=self.game.text().strip()
+            if not a or not b:raise ValueError('请先分别勾选 A 前贴和 B 主视频。')
+            if not game:raise ValueError('请填写游戏 / 历史分组。')
+            if not self.output.text().strip():raise ValueError('请选择保存位置。')
+            n=available_count(a,b,self.store.excluded(game))
+            if not n:raise ValueError('选中的配对已被历史或其他任务使用，没有剩余配对。')
+            count=n if self.quick_mode.currentData()=='max' else self.quick_quantity.value()
+            if count>MAX_BATCH:raise ValueError('单任务最多100000条，请选择指定数量分批导出。')
+            pairs=make_plan(a,b,count,'random',excluded=self.store.excluded(game))
+            s=copy.deepcopy(SETTINGS);s['output']=self.output.text().strip()
+            am={x['id']:copy.deepcopy(x) for role in ('a','b') for x in self.assets[role] if x['id'] in set(a+b)}
+            bid=self.store.create(game,am,pairs,s,[copy.deepcopy(s) for _ in pairs],name=f'一键拼接 {count}条')
+            self.bid=bid;self.refresh_batches();set_combo(self.batch_combo,bid);self.load_batch();self.tabs.setCurrentIndex(3);self.save_session();self.update_quick_summary();self.start_batch(False)
+        except Exception as exc:self.notify_error(exc)
     def thumbnail_ready(self,key,path,error):
         if path:
             pixmap=QPixmap(path)
@@ -603,7 +642,7 @@ class MainWindow(QMainWindow):
             self.overrides.setdefault(a['id'],{})['subtitle_rows']=dialog.result_rows;self.subtitles.setChecked(True);self.refresh_assets();self.save_session()
     def pick_output(self):
         p=QFileDialog.getExistingDirectory(self,'选择成片保存位置',self.output.text())
-        if p:self.output.setText(p)
+        if p:self.output.setText(p);self.update_quick_summary();self.save_session()
     def pick_color(self):
         c=QColorDialog.getColor(QColor(self.font_color.text()),self)
         if c.isValid():self.font_color.setText(c.name().upper())
@@ -841,9 +880,14 @@ class MainWindow(QMainWindow):
         if p:self.table_csv(self.history_table,p)
     def clear_cache(self):
         if self.busy():self.notify_error('请先暂停当前处理。');return
-        if QMessageBox.question(self,'清理媒体缓存','删除处理片段、自动识别缓存和预览。历史、任务、手动校正字幕及源视频保留。下次会重新处理。继续吗？')==QMessageBox.StandardButton.Yes:
-            for name in ['cache','previews','frame_previews']:shutil.rmtree(data_dir()/name,ignore_errors=True)
-            self.last_preview='';self.footer.setText('缓存已清理。')
+        if QMessageBox.question(self,'清理处理缓存','删除处理片段、自动识别缓存和预览。保留云端下载素材、缩略图、历史、任务、手动校正字幕和源视频。下次导出会重新处理。继续吗？')==QMessageBox.StandardButton.Yes:
+            try:
+                before=cache_sizes(data_dir())['processing'];clear_processing_cache(data_dir());self.last_preview='';self.refresh_cache_size()
+                self.footer.setText('已释放处理缓存 '+human_size(max(0,before-cache_sizes(data_dir())['processing'])))
+            except Exception as exc:self.refresh_cache_size();self.notify_error(exc)
+    def refresh_cache_size(self):
+        sizes=cache_sizes(data_dir())
+        self.cache_size_label.setText('可清理处理缓存：'+human_size(sizes['processing'])+' · 云端素材（保留）：'+human_size(sizes['cloud'])+' · 缩略图（保留）：'+human_size(sizes['thumbnails']))
     def help(self):
         d=QDialog(self);d.setWindowTitle('快速使用');d.resize(680,560);l=QVBoxLayout(d);text=QPlainTextEdit();text.setReadOnly(True)
         text.setPlainText('① 导入前贴、主视频和音乐，填写游戏名称。相同内容自动去重。\n\n② 选择声音和字幕。默认保留原声；加新音乐会和原声音混合。想换掉旧音乐，选择“尝试去旧音乐”，先试听效果。主视频默认保留原声音。前贴可单独指定音乐、次数和校正字幕。\n\n③ 输入“生成1000条，均匀分配，前贴01用200次”，或直接填数量、规则。点击生成计划，再预览。20×500最多10000个配对；历史及未完成任务会占用配对。\n\n④ 固定计划创建任务，再点开始。计划和设置会保存在本机。暂停立即中断当前条，完成文件保留；重启可载入任务继续，失败可重试。素材移动后用“重定位”找回原文件。放弃释放未完成配对。\n\n⑤ 整个软件文件夹可复制给同事，不需要装Python。每台电脑历史独立。升级前备份data文件夹或数据库。源视频不包含在历史备份里。\n\n硬切最快，通常更能完整保留连接处口播。淡入淡出等转场会重叠并缩短成片。字幕与音乐分离的质量请在真实素材上检查。后台模式降低进程优先级并顺序导出，仍可能占用显卡和硬盘。\n\n在线AI接口是可选项；不配置也能使用。它只解析规则文字，不理解视频内容。密钥仅当前会话有效。')
