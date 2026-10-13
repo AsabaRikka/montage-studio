@@ -1,5 +1,7 @@
 # 技术方案与工作方式
 
+1.0.8：public_cloud.py使用独立内存CookieJar读取网页授予的匿名许可及指定视图clientvars，下载原始成品附件。HTTP跳转限定HTTPS飞书域，目录完整性核对后原子更新，附件复用原大小/媒体/SHA256检查。无浏览器/CLI依赖、无持久cookie。--public-cloud-test禁止CLI，真实空缓存下载和Qt播放/混剪/离线验收。网页接口并非稳定官方API，当前2000条请求上限；不完整/分页目录拒绝覆盖，不宣称无限容量。
+
 1.0.7：IntroSoundDialog用独立Worker、MediaEngine.prepare复用真实前贴混音与缓存，不改媒体引擎/数据库/云端。试听明确关闭字幕，不隐式识别；停止/关窗取消，结果仍需经过QMediaPlayer实际播放。--sound-test默认隔离，六组原生交互及合成音频频谱验收，发布门禁匹配最终EXE哈希。
 
 1.0.6：SeekSlider移到widgets供Player/FramePreview共用。FramePreview使用源时长初始化范围、同步spin/slider，seekRequested由宿主读取当前字幕/修补设置；单worker加最新请求覆盖，旧结果丢弃，关闭停止并清理。--subtitle-test默认隔离，六组真实Qt/FFmpeg效果帧验收，发布门禁绑定最终EXE哈希。

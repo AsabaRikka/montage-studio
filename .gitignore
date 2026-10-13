@@ -11,3 +11,4 @@ dist/
 release/
 test_results/
 *.log
+.playwright-cli/

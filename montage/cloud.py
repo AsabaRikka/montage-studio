@@ -74,7 +74,9 @@ class FeishuCLI:
                 if process.returncode or result.get('ok') is False:
                     error = result.get('error', {})
                     # Do not expose raw errors/URLs/tokens from the CLI to logs or dialogs.
-                    if error.get('type') in ('authorization', 'authentication'):
+                    if error.get('type') == 'config':
+                        raise RuntimeError('此账号连接尚未配置应用；公开素材库可切换为“公开库（免登录）”。')
+                    if error.get('type') in ('authorization', 'authentication', 'auth'):
                         raise RuntimeError('飞书授权或访问权限不足，请检查连接、完成授权，并确认账号能下载此表视频。')
                     raise RuntimeError('飞书操作失败，请检查网络、表格访问和下载权限。错误码：'+str(error.get('code', process.returncode)))
                 return result
@@ -119,20 +121,36 @@ class CloudLibrary:
     def __init__(self, folder=None):
         self.folder = Path(folder or data_dir()/'cloud')
         self.folder.mkdir(parents=True, exist_ok=True)
-        self.config = load_json(self.folder/'config.json', dict(url=DEFAULT_URL, profile=''))
+        self.config = load_json(self.folder/'config.json', dict(url=DEFAULT_URL, profile='', access_mode='public'))
         self.library = load_json(self.folder/'library.json', dict(items=[], cache={}, target={}))
 
     def cli(self):
         return FeishuCLI(self.folder, self.config.get('profile', ''))
 
-    def save_config(self, url, profile):
+    def save_config(self, url, profile, access_mode=None):
         parsed = urlparse(url)
         if parsed.scheme != 'https' or not parsed.hostname or not (parsed.hostname == 'feishu.cn' or parsed.hostname.endswith('.feishu.cn') or parsed.hostname == 'larksuite.com' or parsed.hostname.endswith('.larksuite.com')):
             raise ValueError('请填写有效的飞书多维表格HTTPS链接。')
-        self.config = dict(url=url, profile=profile.strip())
+        mode = access_mode or self.config.get('access_mode', 'public')
+        if mode not in ('public', 'account'): raise ValueError('不支持的云端访问方式。')
+        if mode == 'public':
+            from .public_cloud import PublicFeishu
+            PublicFeishu(url)
+        self.config = dict(url=url, profile=profile.strip(), access_mode=mode)
         write_json(self.folder/'config.json', self.config)
 
     def refresh(self, stop=None, notify=lambda _: None):
+        if self.config.get('access_mode', 'public') == 'public':
+            from .public_cloud import PublicFeishu
+            notify(dict(type='log', text='正在免登录读取公开前贴目录…'))
+            client = PublicFeishu(self.config['url'], stop)
+            rows, target = client.prepare()
+            catalog = dict(target=target, source_url=self.config['url'], access_mode='public',
+                           items=normalize_records(rows, target), cache=self.library.get('cache', {}),
+                           records=len(rows), refreshed=time.strftime('%Y-%m-%d %H:%M:%S'))
+            write_json(self.folder/'library.json', catalog)
+            self.library = catalog
+            return catalog
         cli = self.cli()
         notify(dict(type='log', text='正在读取飞书前贴目录…'))
         resolved = cli.call(['base', '+url-resolve', '--url', self.config['url'], '--as', 'user'], stop)['data']
@@ -162,7 +180,7 @@ class CloudLibrary:
                 path.unlink(missing_ok=True)
                 path.with_suffix('.manifest.json').unlink(missing_ok=True)
         items = normalize_records(records, target)
-        catalog = dict(target=target, source_url=self.config['url'], items=items, cache=self.library.get('cache', {}), records=len(records),
+        catalog = dict(target=target, source_url=self.config['url'], access_mode='account', items=items, cache=self.library.get('cache', {}), records=len(records),
                        refreshed=time.strftime('%Y-%m-%d %H:%M:%S'))
         write_json(self.folder/'library.json', catalog)
         self.library = catalog
@@ -177,7 +195,8 @@ class CloudLibrary:
         return dict(entry['asset'], path=str(path))
 
     def sync(self, items, stop=None, notify=lambda _: None):
-        cli = self.cli(); target = self.library['target']
+        cli = None; public = None; target = self.library['target']
+        mode = self.library.get('access_mode', 'account')
         source_url = self.library.get('source_url', self.config['url'])
         assets = []; errors = []; downloaded = 0; reused = 0; cancelled = False
         for index, item in enumerate(items, 1):
@@ -195,11 +214,18 @@ class CloudLibrary:
                 final = self.folder/relative; final.parent.mkdir(parents=True, exist_ok=True)
                 temp = final.with_name('download-'+uuid.uuid4().hex+suffix)
                 # CLI permits relative paths within cwd; place cwd at the cloud folder for media.
-                original_work = cli.work; cli.work = self.folder
-                try:
-                    cli.call(['base', '+record-download-attachment', '--base-token', target['base_token'], '--table-id', target['table_id'],
-                              '--record-id', item['record_id'], '--file-token', item['file_token'], '--output', temp.relative_to(self.folder).as_posix(), '--as', 'user'], stop, timeout=900)
-                finally: cli.work = original_work
+                if mode == 'public':
+                    if public is None:
+                        from .public_cloud import PublicFeishu
+                        public = PublicFeishu(source_url, stop)
+                    public.download(item, target, temp)
+                else:
+                    if cli is None: cli = self.cli()
+                    original_work = cli.work; cli.work = self.folder
+                    try:
+                        cli.call(['base', '+record-download-attachment', '--base-token', target['base_token'], '--table-id', target['table_id'],
+                                  '--record-id', item['record_id'], '--file-token', item['file_token'], '--output', temp.relative_to(self.folder).as_posix(), '--as', 'user'], stop, timeout=900)
+                    finally: cli.work = original_work
                 if item['size'] and temp.stat().st_size != item['size']:
                     raise ValueError('下载大小不符，请重试。')
                 result = scan([temp], 'a', stop)

@@ -12,16 +12,16 @@ root=Path(__file__).resolve().parent.parent
 release=root/'release'
 parser=argparse.ArgumentParser()
 parser.add_argument('mode',choices=['prepare','zip'])
-parser.add_argument('--version',default='1.0.7')
-parser.add_argument('--verification',default='test_results/portable_v107')
-parser.add_argument('--upgrade-verification',default='test_results/upgrade_v107')
-parser.add_argument('--isolation-verification',default='test_results/screenshot_v107')
-parser.add_argument('--cloud-verification',default='test_results/cloud_v107_portable')
+parser.add_argument('--version',default='1.0.8')
+parser.add_argument('--verification',default='test_results/portable_v108')
+parser.add_argument('--upgrade-verification',default='test_results/upgrade_v108')
+parser.add_argument('--isolation-verification',default='test_results/screenshot_v108')
+parser.add_argument('--cloud-verification',default='test_results/cloud_v108_portable')
 parser.add_argument('--cloud-baseline-version',default='',help='Reuse historical cloud evidence only when cloud modules are unchanged; no current EXE claim.')
-parser.add_argument('--player-verification',default='test_results/player_v107_portable')
-parser.add_argument('--subtitle-verification',default='test_results/subtitle_v107_portable')
-parser.add_argument('--history-verification',default='test_results/history_v107_portable_final')
-parser.add_argument('--sound-verification',default='test_results/sound_v107_portable')
+parser.add_argument('--player-verification',default='test_results/player_v108_portable')
+parser.add_argument('--subtitle-verification',default='test_results/subtitle_v108_portable')
+parser.add_argument('--history-verification',default='test_results/history_v108_portable')
+parser.add_argument('--sound-verification',default='test_results/sound_v108_portable')
 args=parser.parse_args()
 sys.path.insert(0,str(root))
 from montage import __version__
@@ -103,6 +103,7 @@ elif args.mode=='zip':
             previous=subprocess.check_output(['git','show','v'+args.cloud_baseline_version+':'+path],cwd=root)
             if previous.replace(b'\r\n',b'\n')!=(root/path).read_bytes().replace(b'\r\n',b'\n'):
                 raise SystemExit('Cloud baseline cannot be reused after module changes: '+path)
+    if not cloud.get('cli_forbidden') or cloud.get('access_mode')!='public' or cloud.get('anonymous_sessions_verified',0)<1: raise SystemExit('Anonymous public verification required.')
     if not cloud.get('passed') or len(cloud.get('checks',[]))!=5 or any(not c.get('passed') for c in cloud['checks']) or cloud.get('exe_sha256')!=cloud_hash:
         raise SystemExit('Cloud validation does not match the release executable.')
     player=json.loads((player_verification/'播放器验证.json').read_text(encoding='utf-8'))
@@ -130,7 +131,7 @@ elif args.mode=='zip':
     source_zip=release/('混剪工坊_'+args.version+'_源码.zip')
     subprocess.run(['git','archive','--format=zip','--prefix=混剪工坊源码/','-o',str(source_zip),'HEAD'],cwd=root,check=True)
     report={'version':args.version,'git':revision,'exe_sha256':portable['exe_sha256'],'user_data_included':False,'archives':[]}
-    report['cloud_verification']={'baseline_version':args.cloud_baseline_version or None,'exe_sha256':cloud_hash,'current_exe_retested':not bool(args.cloud_baseline_version)}
+    report['cloud_verification']={'baseline_version':args.cloud_baseline_version or None,'exe_sha256':cloud_hash,'current_exe_retested':not bool(args.cloud_baseline_version),'access_mode':cloud.get('access_mode'),'cli_forbidden':cloud.get('cli_forbidden')}
     for p in [binary_zip,source_zip]:
         with zipfile.ZipFile(p) as z:
             bad=z.testzip()

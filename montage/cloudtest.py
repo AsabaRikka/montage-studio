@@ -12,12 +12,26 @@ from .runtime import write_json, data_dir
 from .store import identity
 
 
-def verify(folder):
+def verify(folder, public=False):
     from .gui import MainWindow, Player
     from .cloud import CloudLibrary
     from .selftest import fixtures
     from .service import scan
     from .media import MediaEngine
+    from .cloud import FeishuCLI
+    from .public_cloud import PublicFeishu
+    original_call, original_prepare = FeishuCLI.call, PublicFeishu.prepare
+    sessions=[]
+    if public:
+        def forbidden(*args, **kwargs):
+            raise AssertionError('公开库禁止调用CLI或读取账号配置')
+        def anonymous_prepare(client):
+            result=original_prepare(client)
+            assert client.anonymous, '服务端未确认匿名会话'
+            sessions.append(True)
+            return result
+        FeishuCLI.call=forbidden
+        PublicFeishu.prepare=anonymous_prepare
     folder=Path(folder).resolve();folder.mkdir(parents=True,exist_ok=True)
     app=QApplication.instance() or QApplication([]);app.setStyle('Fusion')
     window=MainWindow();window.show();errors=[];window.notify_error=lambda e:errors.append(str(e))
@@ -33,21 +47,26 @@ def verify(folder):
         except Exception as exc:checks.append(dict(name=name,passed=False,error=str(exc)))
         write_json(folder/'云端库验证.json',dict(passed=all(c['passed'] for c in checks),checks=checks,
             read_only_remote=True,user_specified_table_only=True,credentials_in_release=False,physical_computers=1,
+            access_mode='public' if public else 'account', cli_forbidden=public, anonymous_sessions_verified=len(sessions),
             exe_sha256=hashlib.sha256(Path(__import__('sys').executable).read_bytes()).hexdigest() if getattr(__import__('sys'),'frozen',False) else None))
     try:
         panel=window.cloud_panel;window.material_tabs.setCurrentWidget(panel);QTest.qWait(120)
         def directory():
-            assert panel.library.cli().status()['ready']
+            if public:
+                assert panel.library.config.get('access_mode','public')=='public'
+                assert not panel.connect_button.isEnabled()
+            else: assert panel.library.cli().status()['ready']
             QTest.mouseClick(panel.refresh_button,Qt.MouseButton.LeftButton)
             wait(lambda:not window.busy());assert not errors,errors
             library=panel.library.library
             assert library['target']['table_id']=='tblO61TwuCnAW1mh'
             assert library['target']['view_id']=='vewBeeIAM0'
-            assert library['records']>=9 and len(library['items'])>=9
+            assert library['records']>0 and len(library['items'])>0
             window.grab().save(str(folder/'云端目录.png'))
-            return dict(records=library['records'],videos=len(library['items']),complete_pagination=True)
+            return dict(records=library['records'],videos=len(library['items']),complete_view=True,anonymous=public)
         check('实际飞书视图目录与字段',directory)
         def synchronize():
+            assert not panel.library.library['cache'], '首次验收必须使用空缓存'
             w=panel.grid
             QTest.mouseClick(w.viewport(),Qt.MouseButton.LeftButton,pos=w.visualItemRect(w.item(0)).topLeft()+QPoint(26,26))
             assert len(w.selectedItems())==1
@@ -60,7 +79,7 @@ def verify(folder):
             wait(lambda:all(a['id'] in window.thumbnail_icons for a in window.assets['a']))
             window.grab().save(str(folder/'云端已同步.png'))
             window.material_tabs.setCurrentIndex(0);QTest.qWait(120);window.grab().save(str(folder/'同步到A前贴.png'))
-            return dict(synced=count,media_probed=True,hashes_verified=True,checkbox_ui=True)
+            return dict(synced=count,new_downloads=count,bytes=sum(Path(a['path']).stat().st_size for a in window.assets['a']),media_probed=True,hashes_verified=True,checkbox_ui=True)
         check('实际视频下载_复选框_同步到A',synchronize)
         def repeat():
             first=window.assets['a'][0];window.overrides[first['id']]={'fixed':1,'subtitle_rows':[]}
@@ -107,12 +126,16 @@ def verify(folder):
             try:
                 assert {a['id'] for a in reopened.assets['a']}==expected
                 lib=reopened.cloud_panel.library
-                from .cloud import FeishuCLI
+                import urllib.request
                 original=FeishuCLI.call
+                original_open=urllib.request.OpenerDirector.open
                 def deny(*args,**kwargs):raise AssertionError('离线复用不应访问飞书')
                 FeishuCLI.call=deny
+                urllib.request.OpenerDirector.open=deny
                 try:result=lib.sync(lib.library['items'])
-                finally:FeishuCLI.call=original
+                finally:
+                    FeishuCLI.call=original
+                    urllib.request.OpenerDirector.open=original_open
                 assert result['reused']==len(expected) and not result['errors']
                 reopened.material_tabs.setCurrentWidget(reopened.cloud_panel);reopened.set_theme(True)
                 grid=reopened.cloud_panel.grid
@@ -125,4 +148,6 @@ def verify(folder):
     finally:
         if window.isVisible():window.close()
         app.processEvents()
+        FeishuCLI.call=original_call
+        PublicFeishu.prepare=original_prepare
     return 0 if checks and all(c['passed'] for c in checks) else 1

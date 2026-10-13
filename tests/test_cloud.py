@@ -23,6 +23,7 @@ def test_projection_only_finished_videos():
 
 def test_refresh_pagination_commits_only_complete_catalog(tmp_path,monkeypatch):
     library=CloudLibrary(tmp_path);library.library['items']=[dict(key='existing')]
+    library.config['access_mode']='account'
     library.library['cache']={'keep':'saved'}
     class CLI:
         work=tmp_path
@@ -48,7 +49,7 @@ def test_refresh_pagination_commits_only_complete_catalog(tmp_path,monkeypatch):
 
 def test_sync_failure_cancel_and_offline_reuse(tmp_path,monkeypatch):
     import montage.cloud as cloud
-    library=CloudLibrary(tmp_path);target=dict(base_token='base',table_id='table')
+    library=CloudLibrary(tmp_path);library.config['access_mode']='account';target=dict(base_token='base',table_id='table')
     items=normalize_records([row(1),row(2),row(3)],target)
     for item in items:item['size']=3
     original_url=library.config['url']

@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSize, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap, QIcon
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QDialog, QFormLayout, QDialogButtonBox, QListWidgetItem, QCheckBox)
+    QPushButton, QDialog, QFormLayout, QDialogButtonBox, QListWidgetItem, QCheckBox, QComboBox)
 from .cloud import CloudLibrary, FeishuCLI, DEFAULT_URL, READ_SCOPES
 from .gallery import MaterialGrid, NAME, DETAIL, EXTRA, KIND
 
@@ -14,9 +14,12 @@ class CloudPanel(QWidget):
         self.library = None
         layout = QVBoxLayout(self); layout.setContentsMargins(0,16,0,0); layout.setSpacing(10)
         row = QHBoxLayout(); self.url = QLineEdit(DEFAULT_URL); self.url.setAccessibleName('飞书前贴库链接')
-        row.addWidget(self.url,1); self.connect_button = QPushButton('飞书连接'); self.connect_button.clicked.connect(self.connection)
+        row.addWidget(self.url,1)
+        self.access_mode=QComboBox(); self.access_mode.addItem('公开库（免登录）','public'); self.access_mode.addItem('账号授权访问','account')
+        self.access_mode.setAccessibleName('云端访问方式'); row.addWidget(self.access_mode)
+        self.connect_button = QPushButton('飞书连接'); self.connect_button.clicked.connect(self.connection)
         row.addWidget(self.connect_button); layout.addLayout(row)
-        row = QHBoxLayout(); self.status = QLabel('首次使用请刷新目录，再勾选要同步的成品视频。'); self.status.setWordWrap(True); self.status.setProperty('muted', True)
+        row = QHBoxLayout(); self.status = QLabel('公开库无需登录或应用配置：刷新目录后勾选成品视频，再同步到 A。'); self.status.setWordWrap(True); self.status.setProperty('muted', True)
         row.addWidget(self.status,1); self.refresh_button = QPushButton('刷新云端目录'); self.refresh_button.clicked.connect(self.refresh)
         row.addWidget(self.refresh_button); self.open_button = QPushButton('打开飞书表格'); self.open_button.clicked.connect(self.open_table); row.addWidget(self.open_button)
         layout.addLayout(row)
@@ -35,9 +38,21 @@ class CloudPanel(QWidget):
         note.setWordWrap(True); note.setProperty('muted',True); layout.addWidget(note)
         window.thumbnail_loader.ready.connect(self.thumbnail_ready)
         try:
-            self.library = CloudLibrary(); self.url.setText(self.library.config.get('url',DEFAULT_URL)); self.render()
+            self.library = CloudLibrary(); self.url.setText(self.library.config.get('url',DEFAULT_URL))
+            self.access_mode.setCurrentIndex(0 if self.library.config.get('access_mode','public')=='public' else 1); self.render()
         except Exception as exc:
             self.status.setText(str(exc)); self.refresh_button.setEnabled(False); self.connect_button.setEnabled(False)
+        self.access_mode.currentIndexChanged.connect(self.mode_changed); self.update_connection_button()
+
+    def update_connection_button(self):
+        self.connect_button.setEnabled(self.access_mode.currentData()=='account' and not self.window.busy())
+        self.connect_button.setToolTip('公开库免登录，无需填写 App ID 或 Secret。' if self.access_mode.currentData()=='public' else '配置应用并登录账号')
+
+    def mode_changed(self):
+        try: self.save_link()
+        except Exception as exc: self.window.notify_error(exc)
+        self.update_connection_button()
+        self.status.setText('公开库无需登录：请刷新目录，已有缓存保留。' if self.access_mode.currentData()=='public' else '账号模式：请检查飞书连接后刷新目录。')
 
     def open_table(self):
         try:
@@ -45,21 +60,21 @@ class CloudPanel(QWidget):
         except Exception as exc: self.window.notify_error(exc)
 
     def save_link(self):
-        self.library.save_config(self.url.text().strip(), self.library.config.get('profile',''))
+        self.library.save_config(self.url.text().strip(), self.library.config.get('profile',''),self.access_mode.currentData())
 
     def start(self, func, done):
         if self.window.busy(): self.window.notify_error('正在处理，请先暂停或等处理结束。'); return False
         self.set_running(True)
         def complete(result):
             self.set_running(False)
-            if 'error' in result: self.status.setText('操作失败；本地已有素材保留。可检查连接后重试。')
+            if 'error' in result: self.status.setText(result['error'])
             if 'cancelled' in result: self.status.setText('已取消，已有下载保留。')
             done(result)
         return self.window.start_work(func, complete)
 
     def set_running(self, running):
-        for widget in (self.refresh_button,self.sync_button,self.url,self.connect_button,self.select_button): widget.setEnabled(not running)
-        if not running: self.count_selection()
+        for widget in (self.refresh_button,self.sync_button,self.url,self.connect_button,self.select_button,self.access_mode): widget.setEnabled(not running)
+        if not running: self.count_selection(); self.update_connection_button()
 
     def refresh(self):
         try: self.save_link()
@@ -94,7 +109,8 @@ class CloudPanel(QWidget):
                 item.setData(ERROR,'未下载，同步后显示视频缩略图')
         catalog = self.library.library
         if catalog.get('refreshed'):
-            self.status.setText(f'{catalog["target"].get("title","云端前贴库")} · {catalog.get("records",0)} 条记录 / {len(self.items)} 个视频 · 更新于 {catalog["refreshed"]}')
+            mode='免登录' if catalog.get('access_mode')=='public' else '账号访问'
+            self.status.setText(f'{mode} · {catalog["target"].get("title","云端前贴库")} · {catalog.get("records",0)} 条记录 / {len(self.items)} 个视频 · 更新于 {catalog["refreshed"]}')
         self.filter_items(); self.grid.sync_checks()
 
     def thumbnail_ready(self, key, path, error):
