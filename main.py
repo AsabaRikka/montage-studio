@@ -14,6 +14,9 @@ def main():
         if mode=='--quick-test':
             import os
             os.environ.setdefault('MONTAGE_DATA_DIR',str(Path(sys.argv[2]).resolve()/'diagnostic_data'))
+            if '--layout-only' in sys.argv:
+                from montage.quicktest import verify_layout
+                return verify_layout(Path(sys.argv[2]))
             from montage.quicktest import verify
             return verify(Path(sys.argv[2]))
         if mode=='--transcribe':

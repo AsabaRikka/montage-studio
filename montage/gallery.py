@@ -74,6 +74,7 @@ class MaterialGrid(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setSelectionRectVisible(False);self.setMouseTracking(True);self.setSpacing(0)
         self.setGridSize(QSize(164,254));self.setUniformItemSizes(True)
+        self.setMinimumHeight(264)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setItemDelegate(MaterialDelegate(self));self.itemSelectionChanged.connect(self.sync_checks)

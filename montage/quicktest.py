@@ -11,6 +11,71 @@ from .runtime import data_dir, write_json
 from . import __version__
 
 
+def verify_layout(folder):
+    """Offline layout acceptance, with synthetic cards and isolated data only."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPixmap, QIcon, QColor
+    from PySide6.QtWidgets import QListWidgetItem, QDialog, QLabel, QPushButton, QScrollArea
+    from .gui import MainWindow
+    from .gallery import NAME, DETAIL, EXTRA, KIND
+    folder=Path(folder).resolve();folder.mkdir(parents=True,exist_ok=True)
+    if not data_dir().resolve().is_relative_to(folder):raise ValueError('Layout check requires isolated data inside report folder')
+    started=time.monotonic();app=QApplication.instance() or QApplication([]);app.setStyle('Fusion')
+    w=MainWindow();w.show();checks=[]
+    def check(name,func):
+        try:checks.append(dict(name=name,passed=True,result=func()))
+        except Exception as exc:
+            import traceback
+            checks.append(dict(name=name,passed=False,error=traceback.format_exc()))
+    try:
+        grids=[w.lists['a'],w.lists['b'],w.cloud_panel.grid]
+        pix=QPixmap(140,116);pix.fill(QColor('#7e9bb3'))
+        for grid in grids:
+            for n in range(35):
+                item=QListWidgetItem(f'合成布局示例 {n+1}');item.setData(Qt.ItemDataRole.UserRole,f'layout-{n}');item.setData(NAME,item.text())
+                item.setData(DETAIL,'仅供布局验证');item.setData(EXTRA,'本机合成示例');item.setData(KIND,grid.role);item.setIcon(QIcon(pix));grid.addItem(item)
+        w.cloud_panel.status.setText('免登录 · 合成布局目录 · 35 条示例（未访问飞书）')
+        def sizes():
+            result=[]
+            for width,height in [(1536,824),(1040,720),(880,560)]:
+                w.resize(width,height)
+                for index,grid in [(0,grids[0]),(1,grids[1]),(3,grids[2])]:
+                    w.material_tabs.setCurrentIndex(index);QTest.qWait(80)
+                    assert grid.viewport().height()>=254,(width,height,index,grid.viewport().height())
+                    grid.scrollToTop();item=grid.item(0);rect=grid.visualItemRect(item)
+                    assert grid.viewport().rect().contains(rect),(rect,grid.viewport().rect())
+                    QTest.mouseClick(grid.viewport(),Qt.MouseButton.LeftButton,pos=rect.topLeft()+QPoint(25,25))
+                    assert item.isSelected() and item.checkState()==Qt.CheckState.Checked
+                    QTest.mouseClick(grid.viewport(),Qt.MouseButton.LeftButton,pos=rect.topLeft()+QPoint(25,25));assert not item.isSelected()
+                    grid.scrollToItem(grid.item(34));QTest.qWait(30);last=grid.visualItemRect(grid.item(34))
+                    QTest.mouseClick(grid.viewport(),Qt.MouseButton.LeftButton,pos=last.topLeft()+QPoint(25,25));assert grid.item(34).isSelected()
+                    grid.clearSelection();grid.scrollToTop()
+                    result.append(dict(window=[w.width(),w.height()],tab=index,viewport_height=grid.viewport().height()))
+                if width>=1040:w.grab().save(str(folder/f'cloud_{width}.png'))
+            scroll=w.tabs.widget(0);assert isinstance(scroll,QScrollArea) and scroll.verticalScrollBar().maximum()>0
+            scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum());QTest.qWait(50)
+            assert scroll.viewport().rect().contains(w.quick_button.mapTo(scroll.viewport(),w.quick_button.rect().center()))
+            w.grab().save(str(folder/'small_window_scrolled.png'));return result
+        check('responsive grids, real mouse selection and small-window scrolling',sizes)
+        def details():
+            w.resize(1040,720);w.material_tabs.setCurrentIndex(3);w.tabs.widget(0).verticalScrollBar().setValue(0);QTest.qWait(50)
+            p=w.cloud_panel;assert not p.url.isVisible();QTest.mouseClick(p.link_button,Qt.MouseButton.LeftButton);QTest.qWait(30)
+            assert p.url.isVisible();QTest.mouseClick(p.link_button,Qt.MouseButton.LeftButton);assert not p.url.isVisible()
+            seen=[]
+            def inspect():
+                d=app.activeModalWidget();seen.append(isinstance(d,QDialog) and any(w.output.text() in label.text() for label in d.findChildren(QLabel)) and any(b.text()=='更改保存位置' for b in d.findChildren(QPushButton)))
+                d.reject()
+            QTimer.singleShot(60,inspect);w.quick_details();assert seen==[True]
+            w.set_theme(True);QTest.qWait(50);w.grab().save(str(folder/'cloud_dark.png'))
+            return dict(link_toggle=True,output_settings_dialog=True,dark_theme=True)
+        check('link disclosure and output/default settings access',details)
+    finally:
+        w.close();QTest.qWait(50)
+    report=dict(version=__version__,passed=bool(checks) and all(c['passed'] for c in checks),checks=checks,seconds=round(time.monotonic()-started,2),data_directory=str(data_dir()),synthetic_cards_only=True,network_used=False)
+    if getattr(sys,'frozen',False):report['exe_sha256']=hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
+    write_json(folder/'layout_verification.json',report);return 0 if report['passed'] else 1
+
+
 def verify(folder):
     from .gui import MainWindow, Player, set_combo
     from .selftest import fixtures

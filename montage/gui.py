@@ -331,7 +331,7 @@ class SubtitleDialog(QDialog):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio '+__version__);self.resize(1280,880);self.setMinimumSize(1040,720)
+        super().__init__();self.setWindowTitle('混剪工坊 · Montage Studio '+__version__);self.resize(1280,880);self.setMinimumSize(880,560)
         self.setWindowIcon(QIcon(str(asset('ui/MontageStudio.ico'))))
         self.dark=False;self.nav_buttons=[];self.icon_buttons=[]
         self.store=Store();self.assets={'a':[],'b':[],'music':[]};self.overrides={};self.plan=[];self.plan_settings=[];self.plan_assets={};self.bid=None;self.worker=None;self.last_preview='';self.api_key='';self.api_config={}
@@ -395,7 +395,8 @@ class MainWindow(QMainWindow):
                 self.queue_status.setText(f'完成 {complete} / {self.jobs_table.rowCount()} · 当前第{e["number"]}条')
         elif e['type']=='progress':self.current_progress.setValue(e['value'])
     def material_tab(self):
-        page=QWidget();l=QVBoxLayout(page);l.setContentsMargins(0,0,0,0);l.setSpacing(12)
+        scroll=QScrollArea();scroll.setWidgetResizable(True)
+        page=QWidget();scroll.setWidget(page);l=QVBoxLayout(page);l.setContentsMargins(0,0,0,0);l.setSpacing(6)
         row=QHBoxLayout();row.addWidget(QLabel('游戏 / 历史分组'));self.game=QLineEdit('默认游戏');self.game.setMaximumWidth(420);row.addWidget(self.game,1);row.addStretch();self.recursive=QCheckBox('包含子文件夹');self.recursive.setChecked(True);row.addWidget(self.recursive);l.addLayout(row)
         self.material_tabs=QTabWidget();self.material_tabs.setDocumentMode(True);self.lists={};self.counts={};l.addWidget(self.material_tabs,1)
         for role,title in [('a','A 前贴'),('b','B 主视频'),('music','音乐库')]:
@@ -415,16 +416,24 @@ class MainWindow(QMainWindow):
             self.material_tabs.addTab(panel,title+' (0)')
         from .cloud_ui import CloudPanel
         self.cloud_panel=CloudPanel(self);self.material_tabs.addTab(self.cloud_panel,'云端前贴')
-        quick=QGroupBox('一键拼接');ql=QVBoxLayout(quick)
+        quick=QWidget();ql=QVBoxLayout(quick);ql.setContentsMargins(0,4,0,0);ql.setSpacing(4)
         row=QHBoxLayout();self.quick_mode=combo([('最大可用数量','max'),('指定数量','count')]);row.addWidget(self.quick_mode)
         self.quick_quantity=spin(1,MAX_BATCH,1000);self.quick_quantity.setEnabled(False);row.addWidget(self.quick_quantity)
-        self.quick_button=button('一键拼接并导出',self.quick_export,True);row.addWidget(self.quick_button);row.addStretch();ql.addLayout(row)
-        self.quick_summary=QLabel('请勾选 A 前贴和 B 主视频。');self.quick_summary.setWordWrap(True);ql.addWidget(self.quick_summary)
-        self.quick_output=QLabel();self.quick_output.setWordWrap(True);row=QHBoxLayout();row.addWidget(self.quick_output,1);row.addWidget(button('更改保存位置',self.pick_output));ql.addLayout(row)
-        note=QLabel('默认：竖屏720p · 硬切 · A/B保留原声 · 随机不重复。换音乐、字幕或指定次数请用下方高级流程。');note.setWordWrap(True);note.setProperty('muted',True);ql.addWidget(note)
+        self.quick_button=button('一键拼接并导出',self.quick_export,True);row.addWidget(self.quick_button);row.addStretch()
+        row.addWidget(button('保存位置 / 默认设置',self.quick_details));ql.addLayout(row)
+        self.quick_summary=QLabel('请勾选 A 前贴和 B 主视频。');self.quick_summary.setWordWrap(True)
+        row=QHBoxLayout();row.addWidget(self.quick_summary,1);row.addWidget(button('画面与声音 →',lambda:self.tabs.setCurrentIndex(1)));ql.addLayout(row)
+        self.quick_output=QLabel();self.quick_output.setWordWrap(True)
         self.quick_mode.currentIndexChanged.connect(self.update_quick_summary);self.game.textChanged.connect(self.update_quick_summary);l.addWidget(quick)
-        row=QHBoxLayout();note=QLabel('直接勾选即可多选，双击播放。主视频默认保留原声。');note.setProperty('muted',True);row.addWidget(note);row.addStretch();row.addWidget(button('下一步：画面与声音',lambda:self.tabs.setCurrentIndex(1),True));l.addLayout(row)
-        self.tabs.addTab(page,'① 素材')
+        self.tabs.addTab(scroll,'① 素材')
+    def quick_details(self):
+        dialog=QDialog(self);dialog.setWindowTitle('一键拼接 · 保存位置与默认设置');dialog.resize(560,180);layout=QVBoxLayout(dialog)
+        output=QLabel('保存到：'+self.output.text());output.setWordWrap(True);layout.addWidget(output)
+        def pick():
+            self.pick_output();output.setText('保存到：'+self.output.text())
+        layout.addWidget(button('更改保存位置',pick))
+        note=QLabel('默认：竖屏720p · 硬切 · A/B保留原声 · 随机不重复。\n换音乐、字幕或指定次数请使用“画面与声音”和“组合计划”。');note.setWordWrap(True);layout.addWidget(note)
+        close=QDialogButtonBox(QDialogButtonBox.StandardButton.Close);close.rejected.connect(dialog.reject);layout.addWidget(close);dialog.exec()
     def settings_tab(self):
         scroll=QScrollArea();scroll.setWidgetResizable(True);page=QWidget();scroll.setWidget(page);l=QVBoxLayout(page)
         row=QHBoxLayout();box=QGroupBox('画面与导出');f=QFormLayout(box)
