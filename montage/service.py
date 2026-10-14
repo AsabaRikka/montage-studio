@@ -46,6 +46,8 @@ def safe_name(name):
 
 def job_output(batch, job):
     folder = Path(batch['settings']['output'])/('任务_'+batch['id'][:8])
+    if job['settings'].get('output_name'):
+        return folder/job['settings']['output_name']
     assets = batch['assets']
     return folder/f'{job["number"]:05d}_{safe_name(assets[job["a"]]["name"])}__{safe_name(assets[job["b"]]["name"])}.mp4'
 

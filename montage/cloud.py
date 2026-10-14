@@ -208,7 +208,7 @@ class CloudLibrary:
             try:
                 cached = self.cached(item)
                 if cached and identity(cached['path']) == cached['id']:
-                    cached['name'] = item['name']+' · '+item['filename']
+                    cached['name'] = item['name']
                     cached['cloud'] = dict(item, source_url=source_url)
                     assets.append(cached); reused += 1; continue
                 suffix = Path(item['filename']).suffix.lower()
@@ -234,7 +234,7 @@ class CloudLibrary:
                 if not result['assets']: raise ValueError('视频无法读取，未加入前贴。')
                 record = result['assets'][0]
                 temp.replace(final)
-                record.update(path=str(final), name=item['name']+' · '+item['filename'], cloud=dict(item, source_url=source_url))
+                record.update(path=str(final), name=item['name'], cloud=dict(item, source_url=source_url))
                 self.library.setdefault('cache', {})[item['key']] = dict(relative_path=relative.as_posix(), asset=record)
                 write_json(self.folder/'library.json', self.library)
                 assets.append(record); downloaded += 1

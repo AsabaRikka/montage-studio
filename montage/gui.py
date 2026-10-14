@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QPushButton,QTabWidget,QListWidget,QListWidgetItem,QFileDialog,QMessageBox,QLineEdit,
     QComboBox,QSpinBox,QDoubleSpinBox,QCheckBox,QFormLayout,QGroupBox,QSplitter,
     QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QDialog,QDialogButtonBox,
-    QProgressBar,QScrollArea,QAbstractItemView,QInputDialog,QColorDialog,QSlider,QStyle)
+    QProgressBar,QScrollArea,QAbstractItemView,QInputDialog,QColorDialog,QSlider,QStyle,QMenu)
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from .runtime import data_dir,write_json
@@ -33,6 +33,7 @@ from . import __version__
 from .runtime import asset
 from .theme import stylesheet, apply as apply_theme, tokens, icon as ui_icon
 from .gallery import MaterialGrid, NAME, DETAIL, EXTRA, KIND, ERROR
+from .naming import RULES, description, display_name
 
 
 STYLE=stylesheet()
@@ -408,6 +409,9 @@ class MainWindow(QMainWindow):
             w=MaterialGrid(role);self.lists[role]=w;bl.addWidget(w,1)
             w.itemSelectionChanged.connect(lambda r=role:self.update_selection_count(r))
             w.itemDoubleClicked.connect(lambda item,r=role:self.play_source(r))
+            if role=='a':
+                w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                w.customContextMenuRequested.connect(self.intro_name_menu)
             br=QHBoxLayout();all_button=button('全选',w.selectAll);clear_button=button('取消选择',w.clearSelection)
             for b in [all_button,clear_button]:b.setProperty('quiet',True);br.addWidget(b)
             br.addStretch();br.addWidget(button('移除选中',lambda checked=False,r=role:self.remove_assets(r)));br.addWidget(button('播放原片',lambda checked=False,r=role:self.play_source(r)));bl.addLayout(br)
@@ -432,8 +436,33 @@ class MainWindow(QMainWindow):
         def pick():
             self.pick_output();output.setText('保存到：'+self.output.text())
         layout.addWidget(button('更改保存位置',pick))
+        naming=combo(RULES);set_combo(naming,self.naming_rule.currentData())
+        naming.currentIndexChanged.connect(lambda:self.naming_rule.setCurrentIndex(naming.currentIndex()))
+        layout.addWidget(QLabel('成片命名规则（一键拼接和组合计划共用）'));layout.addWidget(naming)
+        naming_note=QLabel('日期为点击创建拼接任务当天，格式为10.14。\nA素材右键可改自定义名称，供第三种规则使用；未自定义时使用描述。\n同名成片自动加 _2、_3，避免互相覆盖。');naming_note.setWordWrap(True);layout.addWidget(naming_note)
         note=QLabel('默认：竖屏720p · 硬切 · A/B保留原声 · 随机不重复。\n换音乐、字幕或指定次数请使用“画面与声音”和“组合计划”。');note.setWordWrap(True);layout.addWidget(note)
         close=QDialogButtonBox(QDialogButtonBox.StandardButton.Close);close.rejected.connect(dialog.reject);layout.addWidget(close);dialog.exec()
+        self.save_session()
+    def intro_name_menu(self,pos):
+        grid=self.lists['a'];item=grid.itemAt(pos)
+        if not item:return
+        key=item.data(Qt.ItemDataRole.UserRole);menu=QMenu(self)
+        edit=menu.addAction('修改前贴自定义名称');reset=menu.addAction('恢复默认描述')
+        action=menu.exec(grid.viewport().mapToGlobal(pos))
+        if action==edit:self.edit_intro_name(key)
+        elif action==reset:self.edit_intro_name(key,True)
+    def edit_intro_name(self,key,reset=False):
+        if self.busy():self.notify_error('正在处理，请先暂停或等待完成。');return
+        intro=next((a for a in self.assets['a'] if a['id']==key),None)
+        if not intro:return
+        if reset:intro.pop('custom_name',None)
+        else:
+            value,ok=QInputDialog.getText(self,'修改前贴名称','本机自定义名称（第三种成片命名规则使用，不修改飞书或源文件）',text=display_name(intro))
+            if not ok:return
+            value=value.strip()
+            if not value:self.notify_error('名称不能为空；可用右键“恢复默认描述”。');return
+            intro['custom_name']=value
+        self.refresh_assets();self.save_session()
     def settings_tab(self):
         scroll=QScrollArea();scroll.setWidgetResizable(True);page=QWidget();scroll.setWidget(page);l=QVBoxLayout(page)
         row=QHBoxLayout();box=QGroupBox('画面与导出');f=QFormLayout(box)
@@ -443,9 +472,10 @@ class MainWindow(QMainWindow):
         self.transition_duration=spin(.1,3,.5,2);self.audio_transition=combo([('连接处直接切换','cut'),('声音交叉渐变','crossfade')])
         self.encoder=combo([('NVIDIA优先，失败自动CPU','nvidia'),('CPU兼容编码','cpu')]);self.performance=combo([('后台模式 · 顺序导出','background'),('全速模式 · 增加CPU线程','full')])
         self.crf=spin(16,28,20);self.output=QLineEdit(str(Path.home()/'Videos'/'混剪成片'))
+        self.naming_rule=combo(RULES)
         br=QHBoxLayout();br.addWidget(self.output);br.addWidget(button('选择',self.pick_output))
         for label,w in [('尺寸',self.resolution),('帧率',self.fps),('画面适配',self.fit),('转场',self.transition),('转场秒数',self.transition_duration),('声音连接',self.audio_transition),('编码',self.encoder),('性能',self.performance),('质量值（越低越清晰）',self.crf)]:f.addRow(label,w)
-        f.addRow('输出文件夹',br);note=QLabel('非硬切转场会重叠两段视频，成片会缩短相应时长；可能遮住连接处口播。');note.setWordWrap(True);note.setProperty('muted',True);f.addRow(note)
+        f.addRow('输出文件夹',br);f.addRow('成片命名',self.naming_rule);note=QLabel('非硬切转场会重叠两段视频，成片会缩短相应时长；可能遮住连接处口播。');note.setWordWrap(True);note.setProperty('muted',True);f.addRow(note)
         row.addWidget(box,1);subs=QGroupBox('前贴字幕');sf=QFormLayout(subs)
         self.subtitles=QCheckBox('自动识别并烧录前贴字幕');self.language=combo([('中文','zh'),('自动语言','auto'),('英文','en'),('日文','ja'),('韩文','ko')])
         self.vocabulary=QLineEdit();self.vocabulary.setPlaceholderText('游戏名、人名、专有词，帮助识别')
@@ -492,11 +522,12 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(page,'⑤ 本机历史');self.refresh_history()
     def settings(self):
         s=dict(SETTINGS)
-        for key in ['resolution','fps','fit','transition','audio_transition','encoder','performance','subtitle_position','language']:s[key]=getattr(self,key).currentData()
+        for key in ['resolution','fps','fit','transition','audio_transition','encoder','performance','subtitle_position','language','naming_rule']:s[key]=getattr(self,key).currentData()
         for key in ['transition_duration','crf','font_size','margin','outline']:s[key]=getattr(self,key).value()
         s.update(subtitles=self.subtitles.isChecked(),vocabulary=self.vocabulary.text(),font_color=self.font_color.text(),output=self.output.text().strip(),seed=self.seed.value())
         s.update(self.a_sound.value());s.update(self.b_sound.value());return s
     def apply_settings(self,s):
+        set_combo(self.naming_rule,s.get('naming_rule','b_a'))
         for key in ['resolution','fps','fit','transition','audio_transition','encoder','performance','subtitle_position','language']:set_combo(getattr(self,key),s.get(key,SETTINGS[key]))
         for key in ['transition_duration','crf','font_size','margin','outline']:getattr(self,key).setValue(s.get(key,SETTINGS[key]))
         self.subtitles.setChecked(s.get('subtitles',False));self.vocabulary.setText(s.get('vocabulary',''));self.font_color.setText(s.get('font_color','#FFFFFF'));self.output.setText(s.get('output') or str(Path.home()/'Videos'/'混剪成片'))
@@ -517,7 +548,9 @@ class MainWindow(QMainWindow):
             w.blockSignals(True)
             w.clear()
             for n,a in enumerate(self.assets[role],1):
-                prefix=f'{n:02}  ' if role=='a' else ''
+                prefix=''
+                if role=='a' and a.get('cloud'):a['name']=description(a)
+                label=display_name(a) if role=='a' else a['name']
                 extra=''
                 if role=='a' and a['id'] in self.overrides:
                     override=self.overrides[a['id']]
@@ -525,7 +558,7 @@ class MainWindow(QMainWindow):
                     if override.get('fixed',-1)>=0:extra+=f' · {override["fixed"]}次'
                     if override.get('subtitle_rows') is not None:extra+=' · 已校正字幕'
                 detail=f'{a["duration"]:.1f}s' if role=='music' else f'{a["duration"]:.1f}s · {a["width"]}×{a["height"]}'
-                item=QListWidgetItem(prefix+a['name']);item.setToolTip(a['name']+'\n'+a['path']+extra);item.setData(Qt.ItemDataRole.UserRole,a['id']);item.setData(NAME,prefix+a['name']);item.setData(DETAIL,detail);item.setData(EXTRA,extra.lstrip(' ·'));item.setData(KIND,role)
+                item=QListWidgetItem(label);item.setToolTip(label+'\n'+a['path']+extra);item.setData(Qt.ItemDataRole.UserRole,a['id']);item.setData(NAME,label);item.setData(DETAIL,detail);item.setData(EXTRA,extra.lstrip(' ·'));item.setData(KIND,role)
                 if a.get('cloud'):
                     item.setToolTip(item.toolTip()+'\n云端备注：'+(a['cloud'].get('note') or '无')+'\n来源：'+a['cloud'].get('source_url',''))
                 item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Unchecked);w.addItem(item)
@@ -567,7 +600,7 @@ class MainWindow(QMainWindow):
             count=n if self.quick_mode.currentData()=='max' else self.quick_quantity.value()
             if count>MAX_BATCH:raise ValueError('单任务最多100000条，请选择指定数量分批导出。')
             pairs=make_plan(a,b,count,'random',excluded=self.store.excluded(game))
-            s=copy.deepcopy(SETTINGS);s['output']=self.output.text().strip()
+            s=copy.deepcopy(SETTINGS);s['output']=self.output.text().strip();s['naming_rule']=self.naming_rule.currentData()
             am={x['id']:copy.deepcopy(x) for role in ('a','b') for x in self.assets[role] if x['id'] in set(a+b)}
             bid=self.store.create(game,am,pairs,s,[copy.deepcopy(s) for _ in pairs],name=f'一键拼接 {count}条')
             self.bid=bid;self.refresh_batches();set_combo(self.batch_combo,bid);self.load_batch();self.tabs.setCurrentIndex(3);self.save_session();self.update_quick_summary();self.start_batch(False)

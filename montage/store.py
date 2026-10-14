@@ -6,6 +6,7 @@ import time
 import uuid
 from pathlib import Path
 from .runtime import data_dir
+from .naming import output_names
 
 
 def identity(path):
@@ -46,12 +47,16 @@ class Store:
         if any(a not in assets or b not in assets for a, b in pairs):
             raise ValueError('任务包含未知素材。')
         bid = uuid.uuid4().hex
+        created = time.time()
+        names = output_names(assets, pairs, settings['naming_rule']) if 'naming_rule' in settings else None
         try:
             self.db.execute('BEGIN IMMEDIATE')
             if set(pairs) & self.excluded(game):
                 raise ValueError('配对已被历史或另一个任务使用，请重新生成计划。')
-            self.db.execute('INSERT INTO batches VALUES(?,?,?,?,?,?)', (bid, game, time.time(), json.dumps(settings, ensure_ascii=False), json.dumps(assets, ensure_ascii=False), name))
+            self.db.execute('INSERT INTO batches VALUES(?,?,?,?,?,?)', (bid, game, created, json.dumps(settings, ensure_ascii=False), json.dumps(assets, ensure_ascii=False), name))
             for number, ((a, b), custom) in enumerate(zip(pairs, per_job), 1):
+                custom = dict(custom)
+                if names is not None: custom['output_name'] = names[number-1]
                 self.db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)', (bid, number, a, b, json.dumps(custom, ensure_ascii=False), 'pending', '', ''))
                 self.db.execute('INSERT INTO reservations VALUES(?,?,?,?)', (game, a, b, bid))
             self.db.commit()

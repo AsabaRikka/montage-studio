@@ -94,6 +94,8 @@ class MaterialGrid(QListWidget):
 
     def mousePressEvent(self,event):
         item=self.itemAt(event.position().toPoint())
+        if event.button()==Qt.MouseButton.RightButton and self.role=='a':
+            event.accept();return
         if event.button()==Qt.MouseButton.LeftButton and item and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
             self.setCurrentItem(item,QItemSelectionModel.SelectionFlag.NoUpdate)
             self.anchor=self.row(item);item.setSelected(not item.isSelected());event.accept();return
