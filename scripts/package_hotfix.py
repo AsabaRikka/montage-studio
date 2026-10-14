@@ -49,6 +49,11 @@ else:
     if (app/'data').exists():raise SystemExit('Release contains data; refusing package.')
     manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
     current_hash=sha(app/'MontageStudio.exe');evidence=target/'验证记录';evidence.mkdir(exist_ok=True)
+    if args.naming_report:
+        patch_audit_path=root/'test_results'/('patch_v'+args.version.replace('.','')+'_final_audit.json')
+        patch_audit=json.loads(patch_audit_path.read_text(encoding='utf-8'))
+        if not patch_audit.get('passed') or patch_audit.get('exe_sha256')!=current_hash:raise SystemExit('Invalid applied-patch audit.')
+        shutil.copy2(patch_audit_path,evidence/patch_audit_path.name)
     reports=[('layout',args.layout_report),('naming',args.naming_report)] if args.naming_report else [('layout',args.layout_report),('quick',args.quick_report)]
     for kind,path in reports:
         report_path=root/path;report=json.loads(report_path.read_text(encoding='utf-8'))
