@@ -164,3 +164,7 @@ test_results/portable_final/便携验证.json：passed=true；媒体自检14.8�
 
 本轮尚未构建 1.0.9 发布包；冻结 EXE 验证、ZIP 校验和 Git 标签将在发布前完成。1.0.8 的云端、声音、字幕、播放器和历史证据继续作为历史记录，不冒充当前 1.0.9 EXE 的重新验证。
 
+## GitHub 私有仓库发布（2026-10-28）
+
+源码已发布到 https://github.com/AsabaRikka/montage-studio 。仓库为私有，默认分支为 `master`，远程 HEAD 为 `4b0cd967daab13389b0ab5a7f2e4e8884265ae20`；README 已通过 GitHub API 回读验证。发布只包含 Git 跟踪文件，用户数据、公司素材、模型、日志、测试结果和发布包继续由 `.gitignore` 排除。
+

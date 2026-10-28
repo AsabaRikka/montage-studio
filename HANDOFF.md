@@ -151,6 +151,10 @@ main.py为入口；PySide6中文桌面界面、FFmpeg媒体引擎、SQLite任务
 
 ## 新对话接手
 读AGENTS、本文件及docs/PROGRESS、PRODUCT、PLAN，核对git status与实际证据。继续已授权开发交付，旧规划不是当前状态。修改后按风险验证，更新交接和进度并提交Git。不要自行开启子代理，不上传公司素材、不自动调用收费服务。
+
+## GitHub 私有仓库发布（2026-10-28）
+
+已创建并推送到私有仓库 https://github.com/AsabaRikka/montage-studio 。远程 `origin` 已配置，本地 `master` 跟踪 `origin/master`；远程分支确认指向提交 `4b0cd967daab13389b0ab5a7f2e4e8884265ae20`。GitHub API 回读确认仓库可见性为 `private`，默认分支为 `master`，README 已在线读取验证。未上传被 `.gitignore` 排除的用户 data、公司素材、模型、日志、测试结果和发布产物。
 # 1.0.9 接手记录（2026-10-13）
 
 本轮在 1.0.8 实际代码上增加了素材页一键拼接、历史页缓存大小显示和处理缓存清理，并新增按风险分级的快速验证入口 `python main.py --quick-test <隔离目录>`。一键流程只使用当前勾选的 A/B，自动扣除当前游戏的历史和未完成任务占用，支持最大可用数量或指定数量，默认竖屏 720p、硬切、A/B 原声、随机不重复；高级流程的自定义声音、字幕和规则保留不变。缓存清理只删除 `cache`、`previews`、`frame_previews`，保护 `cloud`、`thumbnails`、源视频、输出、任务、历史和 session。
