@@ -1,21 +1,84 @@
-# 混剪工坊
+# 混剪工坊（Montage Studio）
 
-Windows 本机批量前贴与游戏广告组合工具。已授权开发，当前状态、验证证据和接手入口见 [HANDOFF.md](HANDOFF.md) 与 [docs/PROGRESS.md](docs/PROGRESS.md)。用户使用请读 [使用说明](docs/使用说明.md)。
+Windows 本机批量视频混剪工具：把 **A 前贴 / 口播**、**B 游戏广告或主视频** 和音乐组合成可追踪、可恢复的成片任务。
 
-开发入口 `python main.py`；环境为 Python 3.14，安装 `requirements.txt`。assets 下的 FFmpeg、字体及离线模型必须按 docs/THIRD_PARTY.md 准备，并以 docs/ASSETS_MANIFEST.json 校验。二进制资源不入 Git，发布便携包内完整附带。
+它适合需要反复制作大量短视频组合的团队。软件在本机完成素材导入、组合规划、字幕校正、声音处理、预览、批量导出和历史管理；素材、任务和导出结果默认留在本机，不会自动上传视频或音频。
+
+## 一眼看懂
+
+```text
+A 前贴 / 口播  +  B 主视频  +  音乐
+        │
+        ▼
+  组合计划（去重、均匀或随机、历史排除）
+        │
+        ▼
+  预览与校正（声音、字幕、转场）
+        │
+        ▼
+  可暂停、可恢复、可重试的批量导出
+```
+
+## 主要能力
+
+- A 前贴、B 主视频和音乐分库管理，支持文件、文件夹和拖入导入。
+- 按素材内容 SHA256 管理身份；移动、改名或复制不会绕过历史去重。
+- 支持随机组合、严格均匀分配、指定前贴次数和“一键拼接并导出”。
+- 自动排除已完成历史和未完成任务占用的 A+B 配对，避免重复成片。
+- 默认竖屏 720p；支持硬切、淡入淡出、溶解、擦除和滑动等转场。
+- 支持保留原声、BGM、音量与起点设置，以及本地尝试去旧音乐。
+- 使用本地 faster-whisper 识别字幕，可导入 SRT、逐条校正并查看效果帧。
+- 成片命名可按 B 名称、A 描述、任务日期或本机自定义前贴名组合。
+- 统一播放器支持暂停、拖动、键盘跳转和成片预览。
+- 任务可暂停、恢复、重试、放弃未完成项，历史可备份、恢复和释放配对。
+- 可选读取指定飞书公开素材库，把云端成品同步到本机 A 前贴；不会写回云端。
+
+## 当前版本
+
+当前源码对应 **1.0.11**。这是一个 Windows 便携式桌面应用，最终交付形态是包含程序、FFmpeg、字体和离线模型的完整文件夹；不能只复制 EXE。
+
+项目已经完成本机合成素材验证：包括真实 720p 导出、Qt 播放解码、字幕与声音相关流程、历史保护、布局、升级和成片命名。验证使用隔离数据和合成媒体，不代表已经在第二台电脑或真实公司素材上验收；真实混音仍应先试听。
+
+## 使用便携版
+
+从发布包解压完整文件夹，进入 `MontageStudio`，双击 `MontageStudio.exe`。无需安装 Python、FFmpeg 或字幕模型。第一次使用建议先用随包演示素材走通一遍，再导入少量真实素材。
+
+详细操作说明见 [docs/使用说明.md](docs/使用说明.md)，升级、备份和交付边界见 [docs/DELIVERY.md](docs/DELIVERY.md)。
+
+## 从源码运行
+
+需要 Windows、Python 3.14 和项目依赖。二进制依赖、字体和模型不放进 Git，按 [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) 与 [docs/ASSETS_MANIFEST.json](docs/ASSETS_MANIFEST.json) 准备。
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
+```
+
+运行测试：
 
 ```powershell
 python -m pytest -q
-python main.py --self-test test_results/new_selftest
-python -m PyInstaller --noconfirm MontageStudio.spec
-python scripts/package_release.py prepare
-python scripts/verify_portable.py release/混剪工坊_1.0.5/MontageStudio/MontageStudio.exe test_results/portable_v105
-release/混剪工坊_1.0.5/MontageStudio/MontageStudio.exe --history-test test_results/history_v105_portable
-python scripts/package_release.py zip
 ```
 
-扩展验证需先在目标目录的“演示素材”中复制发布示例；压力测试使用新的空目录。测试产物不写入Git。发布包附有独立证据摘要和完整文件夹，不能只复制EXE。
+构建便携程序需要 PyInstaller 和完整资源，具体步骤见 [docs/TESTING.md](docs/TESTING.md) 及 `MontageStudio.spec`。测试产物、用户 `data`、发布包、模型和大型二进制文件默认被 `.gitignore` 排除。
 
-ZIP还要求最终EXE的播放器、升级、截图隔离和历史五组验证与相同SHA256匹配，详见发布脚本参数。若云端及媒体模块未改，可显式使用历史云端基线（--cloud-baseline-version），门禁检查源文件相同及旧EXE证据，校验记录会注明当前EXE未重跑云端。历史诊断只用独立合成素材；勿将真实用户data设为任何诊断的数据目录。
+## 数据与隐私边界
 
-GPL-3.0。第三方许可及来源见LICENSE、docs/THIRD_PARTY.md及发布包内许可原文。
+- 源视频、音频、任务、历史、缓存和导出结果默认保存在本机 `data` 或 `%LOCALAPPDATA%\\MontageStudio`。
+- 软件不会自动上传素材，不会把视频、音频、图片或素材路径发送给可选 AI 接口；只有用户主动配置并提交规则文字时才会发送规则文字。
+- 飞书功能只读指定目录并下载用户勾选的附件，不写回表格；公开模式使用临时匿名会话。
+- 不要把真实用户 `data`、公司素材、账号凭据或模型文件提交到源码仓库。
+
+## 项目文档
+
+- [使用说明](docs/使用说明.md)：面向实际使用者的完整操作说明
+- [产品范围](docs/PRODUCT.md)：已实现能力、边界和不做事项
+- [开发进度](docs/PROGRESS.md)：版本、验证证据和未验证项目
+- [交接记录](HANDOFF.md)：维护入口、发布记录和已知限制
+- [第三方组件与许可](docs/THIRD_PARTY.md)：FFmpeg、Qt、模型和字体来源
+
+## 许可
+
+源码按 [GPL-3.0](LICENSE) 发布。第三方组件遵循各自许可，来源和许可原文见 `docs/THIRD_PARTY.md`。
